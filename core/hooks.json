@@ -1,0 +1,56 @@
+{
+  "PreToolUse": [
+    {
+      "matcher": "Edit|Write|MultiEdit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/bdd-gates/gherkin-first.sh",
+          "timeout": 15,
+          "statusMessage": "Checking Gherkin-first ordering..."
+        }
+      ]
+    },
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/bdd-gates/gate-bash.sh",
+          "timeout": 10
+        }
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "Edit|Write|MultiEdit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/bdd-gates/log-event.sh",
+          "timeout": 15,
+          "statusMessage": "Logging TDD event..."
+        },
+        {
+          "type": "command",
+          "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/bdd-gates/lint.sh",
+          "timeout": 180,
+          "statusMessage": "Running lint gate..."
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/bdd-gates/check.sh",
+          "timeout": 600,
+          "statusMessage": "Running full check gate..."
+        }
+      ]
+    }
+  ]
+}

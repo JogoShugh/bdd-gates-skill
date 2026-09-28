@@ -1,0 +1,26 @@
+{
+  "name": "<stack-name>",
+  "description": "<language + build tool>: <BDD runner>, <complexity linter>, <architecture test library>.",
+  "rawCommandSample": "<a raw test command the Bash gate must block, or empty string for native logging>",
+  "excludedSample": "<a production-looking path the excludes must let through, e.g. a step definition>",
+  "config": {
+    "stack": "<stack-name>",
+    "prodPatterns": [
+      "<glob for production source, * crosses folders>"
+    ],
+    "prodExcludePatterns": [
+      "<globs for tests, step definitions, generated code, build output>"
+    ],
+    "featurePatterns": [
+      "<glob for .feature files>"
+    ],
+    "lintPatterns": [
+      "<globs whose edit should re-run the linter>"
+    ],
+    "lintCommand": "<fast complexity/lint command, non-zero exit on violation>",
+    "checkCommand": "<full gate: tests + BDD + lint + architecture; use .claude/bdd-gates/bdd-run.sh when bddLogging is wrapper>",
+    "bddCommand": "<raw BDD test command>",
+    "bddLogging": "native | wrapper",
+    "bddRawCommandRegex": "<ERE matching the raw test command when bddLogging is wrapper, else empty>"
+  }
+}

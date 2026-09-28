@@ -1,0 +1,20 @@
+# bdd-gates: complexity rules as build errors. Thresholds are each analyzer's defaults.
+[*.cs]
+# Cyclomatic complexity (Microsoft)
+dotnet_diagnostic.CA1502.severity = error
+# Cognitive complexity
+dotnet_diagnostic.S3776.severity = error
+# Method too long
+dotnet_diagnostic.S138.severity = error
+# Too many parameters
+dotnet_diagnostic.S107.severity = error
+# Control flow nested too deeply
+dotnet_diagnostic.S134.severity = error
+# Condition too complex
+dotnet_diagnostic.S1067.severity = error
+# File too long
+dotnet_diagnostic.S104.severity = error
+
+# Step definitions and generated feature code are test code.
+[{tests/**.cs,**/*.feature.cs}]
+dotnet_diagnostic.S138.severity = suggestion

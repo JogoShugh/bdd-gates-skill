@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Gherkin-first ordering check for any commit that touches production code.
+# Installed by the bdd-gates skill. Activate once with:
+#   git config core.hooksPath .githooks
+# Tool-agnostic: runs for a plain terminal `git commit` too.
+#
+# Since the last commit, the event log must show:
+#   1. a FEATURE_WRITE before the first MAIN_WRITE,
+#   2. a failing BDD run before the first MAIN_WRITE,
+#   3. a passing final BDD run.
+# Order is taken from line order in the append-only log, so events in the same
+# second still compare correctly. Timestamps only bound the "since" window.
+# Known simplification: ordering is global per commit, not per scenario.
+set -o pipefail
+
+root=$(git rev-parse --show-toplevel)
+export BDD_GATES_ROOT=$root
+. "$root/.claude/bdd-gates/lib.sh"
+bdd_has_config || exit 0
+bdd_load
+
+staged_prod=()
+while IFS= read -r f; do
+  bdd_is_prod "$f" && staged_prod+=("$f")
+done < <(git diff --cached --name-only --diff-filter=ACMR)
+[ ${#staged_prod[@]} -gt 0 ] || exit 0
+
+log=$(bdd_log)
+if [ ! -f "$log" ]; then
+  echo "pre-commit: no TDD event log ($log), but this commit touches production code:" >&2
+  printf '  %s\n' "${staged_prod[@]}" >&2
+  exit 1
+fi
+
+# The log stamps UTC; convert the last commit time to UTC before comparing.
+commit_epoch=$(git log -1 --format=%ct 2>/dev/null || echo 0)
+since=$(date -u -r "$commit_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+  || date -u -d "@$commit_epoch" +%Y-%m-%dT%H:%M:%SZ)
+recent=$(awk -v since="$since" '$1 > since' "$log")
+
+if [ -z "$recent" ]; then
+  echo "pre-commit: no TDD events since the last commit, but this commit touches production code." >&2
+  exit 1
+fi
+
+# CUCUMBER_RUN is accepted as a legacy name for BDD_RUN.
+run_re=' (BDD_RUN|CUCUMBER_RUN) '
+first_line() { printf '%s\n' "$recent" | grep -nE -- "$1" | head -1 | cut -d: -f1; }
+feature=$(first_line ' FEATURE_WRITE ')
+fail=$(first_line "${run_re}FAIL")
+main=$(first_line ' MAIN_WRITE ')
+last_run=$(printf '%s\n' "$recent" | grep -E -- "$run_re" | tail -1)
+
+reasons=()
+[ -n "$feature" ] || reasons+=("no FEATURE_WRITE since the last commit")
+[ -n "$fail" ] || reasons+=("no failing BDD run since the last commit (the scenario was never seen red)")
+if [ -n "$feature" ] && [ -n "$main" ] && [ "$feature" -gt "$main" ]; then
+  reasons+=("production code was written before any feature file")
+fi
+if [ -n "$fail" ] && [ -n "$main" ] && [ "$fail" -gt "$main" ]; then
+  reasons+=("production code was written before the BDD suite was seen failing")
+fi
+case "$last_run" in
+  *" PASS"*) ;;
+  *) reasons+=("the latest BDD run since the last commit is not PASS") ;;
+esac
+
+if [ ${#reasons[@]} -gt 0 ]; then
+  echo "pre-commit: TDD ordering check FAILED:" >&2
+  printf '  - %s\n' "${reasons[@]}" >&2
+  echo "" >&2
+  echo "Events since the last commit:" >&2
+  printf '%s\n' "$recent" | sed 's/^/  /' >&2
+  exit 1
+fi
+
+echo "pre-commit: TDD ordering check passed."
+exit 0

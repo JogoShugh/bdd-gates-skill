@@ -1,0 +1,35 @@
+{
+  "name": "dotnet-csharp",
+  "description": "C# on .NET: Reqnroll (SpecFlow successor) on xUnit or NUnit, Roslyn + Sonar analyzers, NetArchTest.",
+  "rawCommandSample": "dotnet test --no-build",
+  "excludedSample": "src/MyApp.Specs/Steps/CheckoutSteps.cs",
+  "config": {
+    "stack": "dotnet-csharp",
+    "prodPatterns": [
+      "src/*.cs"
+    ],
+    "prodExcludePatterns": [
+      "*/obj/*",
+      "*/bin/*",
+      "*.Tests/*",
+      "*.Specs/*",
+      "*.IntegrationTests/*",
+      "tests/*"
+    ],
+    "featurePatterns": [
+      "*.feature"
+    ],
+    "lintPatterns": [
+      "*.cs",
+      "*.csproj",
+      "*.props",
+      "*.targets",
+      ".editorconfig"
+    ],
+    "lintCommand": "dotnet build --nologo -v q -clp:ErrorsOnly",
+    "checkCommand": ".claude/bdd-gates/bdd-run.sh",
+    "bddCommand": "dotnet test --nologo",
+    "bddLogging": "wrapper",
+    "bddRawCommandRegex": "(^|[;&|[:space:]])dotnet[[:space:]]+test([[:space:]]|$)"
+  }
+}

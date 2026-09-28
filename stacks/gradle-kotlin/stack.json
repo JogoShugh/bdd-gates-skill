@@ -1,0 +1,25 @@
+{
+  "name": "gradle-kotlin",
+  "description": "Kotlin on Gradle (Kotlin DSL): Cucumber-JVM on the JUnit Platform, Detekt, Konsist.",
+  "rawCommandSample": "",
+  "excludedSample": "",
+  "config": {
+    "stack": "gradle-kotlin",
+    "prodPatterns": [
+      "src/main/kotlin/*.kt"
+    ],
+    "prodExcludePatterns": [],
+    "featurePatterns": [
+      "src/test/resources/features/*.feature"
+    ],
+    "lintPatterns": [
+      "*.kt",
+      "*.kts"
+    ],
+    "lintCommand": "./gradlew detekt --console=plain -q",
+    "checkCommand": "./gradlew check --console=plain",
+    "bddCommand": "./gradlew test --console=plain",
+    "bddLogging": "native",
+    "bddRawCommandRegex": ""
+  }
+}
