@@ -73,6 +73,11 @@ fi
 # 5. Keep the local event log out of git.
 gitignore=$target/.gitignore
 if ! grep -qxF '.claude/tdd-events.log' "$gitignore" 2>/dev/null; then
+  # Without this, a file whose last line lacks a newline gets the path glued
+  # onto that line (".DS_Store.claude/tdd-events.log"), and the log is not ignored.
+  if [ -s "$gitignore" ] && [ -n "$(tail -c 1 "$gitignore")" ]; then
+    echo >> "$gitignore"
+  fi
   echo '.claude/tdd-events.log' >> "$gitignore"
   echo "added .claude/tdd-events.log to .gitignore"
 fi

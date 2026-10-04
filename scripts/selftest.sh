@@ -42,6 +42,20 @@ set_config() { # <jq filter>
   jq "$1" "$repo/.claude/bdd-gates.json" > "$tmp" && mv "$tmp" "$repo/.claude/bdd-gates.json"
 }
 
+# A .gitignore whose last line has no newline (common from editors and
+# templates) must not get the log path glued onto that line.
+echo "gitignore without trailing newline"
+new_repo gitignore-no-newline
+printf '.DS_Store' > "$repo/.gitignore"
+expect_exit 0 "install succeeds" "$skill_dir/scripts/install.sh" gradle-kotlin "$repo"
+if grep -qxF '.DS_Store' "$repo/.gitignore" && grep -qxF '.claude/tdd-events.log' "$repo/.gitignore"; then
+  ok "existing last line kept, log path on its own line"
+else
+  bad "gitignore lines merged: $(tr '\n' '|' < "$repo/.gitignore")"
+fi
+mkdir -p "$repo/.claude" && touch "$repo/.claude/tdd-events.log"
+[ -z "$(git -C "$repo" status --porcelain -- .claude/tdd-events.log)" ] && ok "event log is ignored by git" || bad "event log shows in git status"
+
 for stack_dir in "$skill_dir"/stacks/*/; do
   stack=$(basename "$stack_dir")
   case "$stack" in _*) continue ;; esac
