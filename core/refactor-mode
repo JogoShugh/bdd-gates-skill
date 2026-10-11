@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Refactor mode for the bdd-gates TDD check. For the author only, typed at the
-# Claude Code prompt as a shell command:
-#   ! scripts/refactor-mode on "why this is a refactor"
-#   ! scripts/refactor-mode off
-#   ! scripts/refactor-mode status
+# Refactor mode for the bdd-gates TDD check. For the author only, sent as a
+# whole prompt from any Claude Code client, remote control included
+# (.claude/bdd-gates/refactor-prompt.sh runs this script):
+#   refactor-mode on "why this is a refactor"
+#   refactor-mode off
+#   refactor-mode status
+# A `!` shell command does not run over remote control; the prompt form does.
 # A refactor changes the structure of production code and not its behaviour,
 # so it has no new scenario and cannot be seen red first. Refactor mode lets
 # ONE commit change production code without a feature change or a red run,

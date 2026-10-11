@@ -27,6 +27,9 @@ tool_hook() { # <script> <tool> <input-key> <value>
   jq -nc --arg t "$2" --arg k "$3" --arg v "$4" '{tool_name: $t, tool_input: {($k): $v}}' \
     | CLAUDE_PROJECT_DIR=$repo "$repo/.claude/bdd-gates/$1"
 }
+prompt_hook() { # <prompt>
+  jq -nc --arg p "$1" '{prompt: $p}' | CLAUDE_PROJECT_DIR=$repo "$repo/.claude/bdd-gates/refactor-prompt.sh"
+}
 bash_hook() { printf '{"tool_input":{"command":"%s"}}' "$2" | CLAUDE_PROJECT_DIR=$repo "$repo/.claude/bdd-gates/$1"; }
 new_repo() {
   repo=$work/$1
@@ -209,6 +212,19 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   expect_exit 2 "Claude may not skip the hooks" tool_hook protect-gate.sh Bash command 'git commit --no-verify -m x'
   expect_exit 2 "Claude may not edit the gate scripts" tool_hook protect-gate.sh Edit file_path "$repo/.claude/bdd-gates/lib.sh"
   expect_exit 0 "Claude may run the pre-commit check" tool_hook protect-gate.sh Bash command '.githooks/pre-commit'
+  expect_exit 2 "a non-Bash tool call naming the mode is blocked" tool_hook protect-gate.sh ScheduleWakeup prompt 'refactor-mode on "x"'
+  expect_exit 0 "Claude may read the gate" tool_hook protect-gate.sh Read file_path "$repo/scripts/refactor-mode"
+
+  # Switching by prompt: only a whole prompt in the exact form counts.
+  rf_reset
+  out=$(prompt_hook 'refactor-mode on "rename"')
+  [ -f "$mode_file" ] && printf '%s' "$out" | grep -q 'Refactor mode is on' \
+    && ok "whole prompt switches refactor mode on" || bad "prompt did not switch the mode on: $out"
+  prompt_hook 'refactor-mode off' >/dev/null
+  [ ! -f "$mode_file" ] && ok "whole prompt switches refactor mode off" || bad "prompt did not switch the mode off"
+  out=$(prompt_hook 'please explain what refactor-mode on "x" does')
+  [ ! -f "$mode_file" ] && [ -z "$out" ] \
+    && ok "a sentence that mentions the mode switches nothing" || bad "a mention switched the mode: $out"
 done
 
 echo ""

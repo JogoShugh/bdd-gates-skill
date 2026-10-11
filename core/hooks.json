@@ -1,7 +1,18 @@
 {
+  "UserPromptSubmit": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/bdd-gates/refactor-prompt.sh",
+          "timeout": 15
+        }
+      ]
+    }
+  ],
   "PreToolUse": [
     {
-      "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+      "matcher": "*",
       "hooks": [
         {
           "type": "command",

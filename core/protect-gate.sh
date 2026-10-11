@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# PreToolUse (Bash|Edit|Write|MultiEdit|NotebookEdit). Keeps the TDD gate out
-# of Claude's reach: Claude may not switch refactor mode on (only the author
-# does, with `! scripts/refactor-mode on "why"`), and may not change what
+# PreToolUse (every tool). Keeps the TDD gate out of Claude's reach: Claude
+# may not switch refactor mode on (only the author does, with the prompt
+# `refactor-mode on "why"`, see refactor-prompt.sh), and may not change what
 # checks it: the gate scripts and config, the git hooks and where git finds
 # them, the Claude Code settings that register these hooks, or the event log
-# the checks read. Nor may Claude skip the hooks with --no-verify.
+# the checks read. Nor may Claude skip the hooks with --no-verify, or name the
+# gate or the mode in any other tool call (scheduling, messaging, agents, MCP),
+# so Claude cannot send the author's switch prompt by another route.
 # Claude may still run the pre-commit check and the test wrapper, and read
 # every one of these files. Exit 2 blocks the tool call.
 set -o pipefail
@@ -40,6 +42,16 @@ case "$tool" in
     path=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' <<<"$input")
     if printf '%s' "$path" | grep -Eq -- "$protected"; then
       block "$path is part of the TDD gate or refactor mode."
+    fi
+    ;;
+  Read | Grep | Glob | LS)
+    # Reading the gate is allowed.
+    ;;
+  *)
+    # Any other tool (scheduling, messaging, agents, MCP): its whole input may
+    # not name the gate or the mode, so Claude cannot send the author's switch.
+    if jq -c '.tool_input // {}' <<<"$input" | grep -Eq -- "$protected"; then
+      block "this call names the TDD gate or refactor mode."
     fi
     ;;
 esac

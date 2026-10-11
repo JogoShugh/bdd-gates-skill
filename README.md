@@ -23,7 +23,7 @@ gates and to work inside them. This README is for the people who own the repo.
 | Green to stop | When Claude tries to end its turn | Runs the full check; Claude keeps working until it passes |
 | TDD ordering | `git commit`, from any tool or terminal | Rejects a commit of production code unless the log shows a feature write, then a failing BDD run, before the first production write, and a passing final run |
 | Refactor mode | `git commit`, after the author switches it on | Lets one commit change production code with no feature change, if no test or feature file changed, the suite passed before the first production write, and the last run passed after the last one |
-| Gate protection | Before Claude runs a command or edits a file | Blocks Claude from switching refactor mode on, changing the gate's scripts, config, git hooks, settings or event log, and skipping hooks |
+| Gate protection | Before every Claude tool call | Blocks Claude from switching refactor mode on, changing the gate's scripts, config, git hooks, settings or event log, and skipping hooks |
 
 The event log is plain text, one fact per line, and gitignored:
 
@@ -149,13 +149,19 @@ The template README lists candidate tools for TypeScript, Python, and Go.
 
 A refactor changes the structure of production code, not its behavior. It has
 no new scenario, so it cannot be seen red first. For that case, you (never
-Claude) switch on refactor mode for one commit, at the Claude Code prompt:
+Claude) switch on refactor mode for one commit. Send one of these as a whole
+prompt, from any Claude Code client, remote control included:
 
 ```
-! scripts/refactor-mode on "extract the pricing rules from Checkout"
-! scripts/refactor-mode status
-! scripts/refactor-mode off
+refactor-mode on "extract the pricing rules from Checkout"
+refactor-mode status
+refactor-mode off
 ```
+
+A `UserPromptSubmit` hook (`refactor-prompt.sh`) runs `scripts/refactor-mode`
+with those arguments, and Claude reports its output. Only a whole prompt in
+exactly this form counts; a sentence that mentions the mode switches nothing.
+In a terminal, `scripts/refactor-mode on "why"` works too.
 
 The mode starts from a clean working tree and is bound to the current HEAD.
 While it is on, Claude may write production code with no feature change, and
@@ -173,10 +179,13 @@ any other commit. The mode ends with the next commit, and is void if HEAD
 moves first.
 
 The state file lives in the git directory, not the working tree. A
-`PreToolUse` hook (`protect-gate.sh`) blocks Claude from running the switch,
-from touching the gate's scripts, config, git hooks, Claude Code settings or
-event log, and from `--no-verify` or `git commit -n`. Claude may still read
-them, run `.githooks/pre-commit`, and run `bdd-run.sh`.
+`PreToolUse` hook (`protect-gate.sh`) runs before every tool. It blocks Claude
+from running the switch, from touching the gate's scripts, config, git hooks,
+Claude Code settings or event log, and from `--no-verify` or `git commit -n`.
+Any other tool call whose input names the gate or the mode is blocked too
+(scheduling, messaging, agents, MCP), so Claude cannot send the switch prompt
+by another route. Claude may still read these files, run
+`.githooks/pre-commit`, and run `bdd-run.sh`.
 
 ## Testing the skill
 
@@ -210,6 +219,9 @@ repo keeps working even for teammates who do not have the skill.
 
 - **Refactors need the author.** Only you can switch on refactor mode, one
   commit at a time. Claude cannot open it for itself.
+- **A prompt does not say where it came from.** If another Claude session can
+  deliver a message into this session as a prompt, it could switch refactor
+  mode. Claude in this session cannot, because of `protect-gate.sh`.
 - **Gate protection is a pattern match.** `protect-gate.sh` matches paths and
   words in Claude's commands. It stops drift, not a determined attempt to
   hide a path, so review commits to the gate files as usual.

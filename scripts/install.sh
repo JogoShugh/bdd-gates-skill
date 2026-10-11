@@ -23,7 +23,7 @@ git -C "$target" rev-parse --git-dir >/dev/null 2>&1 || { echo "$target is not a
 # 1. Core scripts, committed with the repo so every teammate gets the gates.
 dest=$target/.claude/bdd-gates
 mkdir -p "$dest"
-for f in lib.sh gherkin-first.sh protect-gate.sh log-event.sh lint.sh check.sh bdd-run.sh gate-bash.sh; do
+for f in lib.sh gherkin-first.sh protect-gate.sh refactor-prompt.sh log-event.sh lint.sh check.sh bdd-run.sh gate-bash.sh; do
   cp "$skill_dir/core/$f" "$dest/$f"
   chmod +x "$dest/$f"
 done
@@ -96,5 +96,5 @@ Core installed for stack '$stack'. Remaining steps:
   1. Follow $skill_dir/stacks/$stack/SETUP.md (linter, architecture tests, BDD runner, run logging).
   2. Activate the git hooks once: git config core.hooksPath .githooks
   3. Prove the gate live:          $skill_dir/scripts/verify-install.sh $target
-  4. Refactor mode, for one commit, is yours to switch on:  ! scripts/refactor-mode on "why"
+  4. Refactor mode, for one commit, is yours to switch on: send the prompt  refactor-mode on "why"
 EOF

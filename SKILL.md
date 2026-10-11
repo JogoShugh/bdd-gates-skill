@@ -20,8 +20,8 @@ replaces the hooks**: if a gate blocks you, satisfy it; never edit it away.
 | Logged BDD runs | stack-native hook, or `bdd-run.sh` wrapper + `gate-bash.sh` | Raw test command that would leave no `BDD_RUN` fact (wrapper stacks only) |
 | Green to stop | `Stop` → `check.sh` | Ending the turn while tests, BDD, lint, or architecture checks fail |
 | Ordering | `.githooks/pre-commit` | Commit of production code without feature write, red BDD run before the first prod write, and a green final run |
-| Refactor mode | `scripts/refactor-mode`, switched on by the user only; `pre-commit`, `commit-msg`, `post-commit` | One commit of production code with no feature change, unless tests and features are unchanged and the suite is green before and after |
-| Gate protection | `PreToolUse` Bash/Edit/Write → `protect-gate.sh` | Switching refactor mode on; editing gate scripts, config, git hooks, settings, or the event log; `--no-verify` |
+| Refactor mode | prompt `refactor-mode on "why"` → `refactor-prompt.sh`, switched on by the user only; `pre-commit`, `commit-msg`, `post-commit` | One commit of production code with no feature change, unless tests and features are unchanged and the suite is green before and after |
+| Gate protection | `PreToolUse` every tool → `protect-gate.sh` | Switching refactor mode on; editing gate scripts, config, git hooks, settings, or the event log; `--no-verify`; any other tool call naming the gate or the mode |
 
 Layout:
 ```
@@ -70,9 +70,10 @@ remove the old entries so gates do not run twice.
 5. End the turn. The Stop gate runs the full check.
 
 A pure refactor with no new behavior has no scenario to see red. For that,
-the user switches on refactor mode for one commit, with
-`! scripts/refactor-mode on "why"` at the prompt. You never switch it on;
-`protect-gate.sh` blocks you. Ask the user, and stop until they do. With the
+the user switches on refactor mode for one commit, by sending the whole
+prompt `refactor-mode on "why"`. You never switch it on, and never schedule,
+send, or relay that prompt; `protect-gate.sh` blocks you. When the prompt
+arrives, report the hook's output verbatim. Ask the user, and stop until they do. With the
 mode on:
 
 1. Run the BDD suite and see it **pass** before any production write.
