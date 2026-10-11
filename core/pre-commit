@@ -8,6 +8,8 @@
 #   1. a FEATURE_WRITE before the first MAIN_WRITE,
 #   2. a failing BDD run before the first MAIN_WRITE,
 #   3. a passing final BDD run.
+# Or, when the author switched refactor mode on (scripts/refactor-mode), the
+# refactor terms below instead.
 # Order is taken from line order in the append-only log, so events in the same
 # second still compare correctly. Timestamps only bound the "since" window.
 # Known simplification: ordering is global per commit, not per scenario.
@@ -26,6 +28,53 @@ done < <(git diff --cached --name-only --diff-filter=ACMR)
 [ ${#staged_prod[@]} -gt 0 ] || exit 0
 
 log=$(bdd_log)
+
+# Refactor mode: switched on by the author (scripts/refactor-mode), for one
+# commit on the HEAD it names. Production code may change with no feature
+# change and no red run, but only on these terms:
+#   1. no feature file and no test file differs from HEAD, staged or not;
+#   2. a BDD run passed after the mode was switched on, before the first
+#      production write, and the last run passed, after the last write.
+if bdd_refactor_present; then
+  if ! bdd_refactor_on; then
+    echo "pre-commit: refactor mode was switched on for $(bdd_refactor_field head), but HEAD is now $(git rev-parse HEAD)." >&2
+    echo "  The author switches it off (scripts/refactor-mode off) or on again." >&2
+    exit 1
+  fi
+  reasons=()
+  while IFS= read -r line; do
+    p=${line:3}
+    p=${p##* -> }
+    bdd_is_test "$p" && reasons+=("a refactor leaves tests and features as they are, but $p differs from HEAD")
+  done < <(git status --porcelain -uall)
+  head=$(bdd_refactor_field head)
+  window=$(awk -v on="REFACTOR_ON head=$head" 'index($0, on) { buf = ""; found = 1; next } found { buf = buf $0 "\n" } END { printf "%s", buf }' "$log" 2>/dev/null)
+  first_line() { printf '%b' "$window" | grep -nE -- "$1" | head -1 | cut -d: -f1; }
+  last_line() { printf '%b' "$window" | grep -nE -- "$1" | tail -1 | cut -d: -f1; }
+  pass=$(first_line ' BDD_RUN PASS ')
+  main=$(first_line ' MAIN_WRITE ')
+  last_main=$(last_line ' MAIN_WRITE ')
+  last_run=$(last_line ' BDD_RUN ')
+  [ -n "$pass" ] || reasons+=("no passing BDD run since refactor mode was switched on (green before the change)")
+  if [ -n "$pass" ] && [ -n "$main" ] && [ "$pass" -gt "$main" ]; then
+    reasons+=("production code was written before the suite was seen green")
+  fi
+  case "$(printf '%b' "$window" | grep -E ' BDD_RUN ' | tail -1)" in
+    *" PASS"*) ;;
+    *) reasons+=("the latest BDD run is not PASS (green after the change)") ;;
+  esac
+  if [ -n "$last_main" ] && [ -n "$last_run" ] && [ "$last_run" -lt "$last_main" ]; then
+    reasons+=("production code was written after the last BDD run")
+  fi
+  if [ ${#reasons[@]} -gt 0 ]; then
+    echo "pre-commit: refactor check FAILED:" >&2
+    printf '  - %s\n' "${reasons[@]}" >&2
+    exit 1
+  fi
+  echo "pre-commit: refactor check passed ($(bdd_refactor_field reason))."
+  exit 0
+fi
+
 if [ ! -f "$log" ]; then
   echo "pre-commit: no TDD event log ($log), but this commit touches production code:" >&2
   printf '  %s\n' "${staged_prod[@]}" >&2

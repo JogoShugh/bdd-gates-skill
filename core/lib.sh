@@ -21,11 +21,12 @@ bdd_list() { jq -r --arg k "$1" '.[$k] // [] | .[]' "$(bdd_config)"; }
 
 # Loads the pattern lists once so matching does not re-run jq per path.
 bdd_load() {
-  PROD_PATTERNS=(); PROD_EXCLUDES=(); FEATURE_PATTERNS=(); LINT_PATTERNS=()
+  PROD_PATTERNS=(); PROD_EXCLUDES=(); FEATURE_PATTERNS=(); TEST_PATTERNS=(); LINT_PATTERNS=()
   local p
   while IFS= read -r p; do [ -n "$p" ] && PROD_PATTERNS+=("$p"); done < <(bdd_list prodPatterns)
   while IFS= read -r p; do [ -n "$p" ] && PROD_EXCLUDES+=("$p"); done < <(bdd_list prodExcludePatterns)
   while IFS= read -r p; do [ -n "$p" ] && FEATURE_PATTERNS+=("$p"); done < <(bdd_list featurePatterns)
+  while IFS= read -r p; do [ -n "$p" ] && TEST_PATTERNS+=("$p"); done < <(bdd_list testPatterns)
   while IFS= read -r p; do [ -n "$p" ] && LINT_PATTERNS+=("$p"); done < <(bdd_list lintPatterns)
 }
 
@@ -81,3 +82,22 @@ bdd_append() {
 
 # Reads the file path from a hook's JSON payload on stdin.
 bdd_hook_file_path() { jq -r '.tool_input.file_path // empty'; }
+
+# Refactor mode (scripts/refactor-mode): the author lets one commit change
+# production code with no feature change, on the terms .githooks/pre-commit
+# checks. Its file is inside the git directory, never in the working tree.
+bdd_refactor_file() { echo "$(cd "$(bdd_root)" && git rev-parse --absolute-git-dir)/bdd-refactor"; }
+bdd_refactor_present() { [ -f "$(bdd_refactor_file)" ]; }
+bdd_refactor_field() { sed -n "s/^$1=//p" "$(bdd_refactor_file)"; }
+
+# True when refactor mode is on for the current HEAD, the commit it was switched on for.
+bdd_refactor_on() {
+  bdd_refactor_present && [ "$(bdd_refactor_field head)" = "$(cd "$(bdd_root)" && git rev-parse HEAD)" ]
+}
+
+# True for a test file or a test fixture (testPatterns), or a feature file,
+# which a refactor must leave as it is.
+bdd_is_test() {
+  _bdd_any "$1" ${TEST_PATTERNS[@]+"${TEST_PATTERNS[@]}"} && return 0
+  bdd_is_feature "$1"
+}

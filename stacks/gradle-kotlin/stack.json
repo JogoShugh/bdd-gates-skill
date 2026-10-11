@@ -12,6 +12,12 @@
     "featurePatterns": [
       "src/test/resources/features/*.feature"
     ],
+    "testPatterns": [
+      "src/test/*",
+      "*/src/test/*",
+      "src/testFixtures/*",
+      "*/src/testFixtures/*"
+    ],
     "lintPatterns": [
       "*.kt",
       "*.kts"
