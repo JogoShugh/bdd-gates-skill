@@ -34,7 +34,8 @@ scripts/   install.sh, verify-install.sh, selftest.sh
 ## Install into a repo
 
 1. Detect the stack from build files (`build.gradle.kts` → `gradle-kotlin`,
-   `*.sln`/`*.csproj` → `dotnet-csharp`). If no folder under `stacks/` fits,
+   `*.sln`/`*.csproj` → `dotnet-csharp`, `tsconfig.json` → `node-typescript`). If no
+   folder under `stacks/` fits,
    go to "Add a stack" first.
 2. Run `scripts/install.sh <stack> <repo>`. It copies `core/` to
    `<repo>/.claude/bdd-gates/`, writes `.claude/bdd-gates.json`, merges hooks

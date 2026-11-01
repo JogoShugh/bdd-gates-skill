@@ -1,0 +1,51 @@
+{
+  "name": "node-typescript",
+  "description": "TypeScript on Node: cucumber-js, ESLint (core, SonarJS, typescript-eslint) + tsc, dependency-cruiser.",
+  "rawCommandSample": "npx cucumber-js",
+  "excludedSample": "src/generated/client.ts",
+  "config": {
+    "stack": "node-typescript",
+    "prodPatterns": [
+      "src/*.ts",
+      "*/src/*.ts"
+    ],
+    "prodExcludePatterns": [
+      "dist/*",
+      "*/dist/*",
+      "node_modules/*",
+      "*/node_modules/*",
+      "*.d.ts",
+      "*/generated/*",
+      "*.generated.ts",
+      "*.test.ts",
+      "*.spec.ts",
+      "*/features/*",
+      "*/fixtures/*"
+    ],
+    "featurePatterns": [
+      "*.feature"
+    ],
+    "testPatterns": [
+      "features/step_definitions/*",
+      "*/features/step_definitions/*",
+      "features/support/*",
+      "*/features/support/*",
+      "fixtures/*",
+      "*/fixtures/*",
+      "*.test.ts",
+      "*.spec.ts"
+    ],
+    "lintPatterns": [
+      "*.ts",
+      "*.mts",
+      "*.cts",
+      "eslint.config.mjs",
+      "tsconfig*.json"
+    ],
+    "lintCommand": "npx eslint . && npx tsc --noEmit",
+    "checkCommand": ".claude/bdd-gates/bdd-run.sh && npx eslint . && npx tsc --noEmit && npx depcruise src",
+    "bddCommand": "npx cucumber-js",
+    "bddLogging": "wrapper",
+    "bddRawCommandRegex": "(^|[;&|(][[:space:]]*)([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*((npx[[:space:]]+)?([^[:space:];&|]*/)?cucumber-js|npm[[:space:]]+(run[[:space:]]+)?(test|t))([[:space:];&|)]|$)"
+  }
+}

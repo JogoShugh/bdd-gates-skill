@@ -42,7 +42,7 @@ Requirements: `bash` (3.2 or later, so stock macOS works), `git`, `jq`.
 SKILL=path/to/bdd-gates
 
 # 1. Install the language-agnostic core for your stack.
-$SKILL/scripts/install.sh gradle-kotlin /path/to/repo     # or dotnet-csharp
+$SKILL/scripts/install.sh gradle-kotlin /path/to/repo     # or dotnet-csharp or node-typescript
 
 # 2. Check the file patterns in /path/to/repo/.claude/bdd-gates.json.
 
@@ -112,6 +112,7 @@ Wrong patterns do not fail loudly; the gate just never matches. Run
 |---|---|---|---|---|
 | `gradle-kotlin` | Cucumber-JVM (JUnit Platform) | native, Gradle `finalizedBy` | Detekt | Konsist |
 | `dotnet-csharp` | Reqnroll (xUnit or NUnit) | wrapper, `bdd-run.sh` | Roslyn CA1502 + SonarAnalyzer | Project references + NetArchTest |
+| `node-typescript` | cucumber-js | wrapper, `bdd-run.sh` | ESLint (core, SonarJS, typescript-eslint) + `tsc` | dependency-cruiser |
 
 Each stack folder holds `stack.json` (config defaults), `SETUP.md` (build
 changes), and `templates/`. Thresholds are always each tool's own defaults,
@@ -261,5 +262,6 @@ bdd-gates/
 └── stacks/
     ├── _template/           how to add a language
     ├── gradle-kotlin/
+    ├── node-typescript/
     └── dotnet-csharp/
 ```
