@@ -95,6 +95,7 @@ scripts are identical in every repo.
 | `bddCommand` | The raw BDD test command |
 | `bddLogging` | `native`: the build logs each run itself. `wrapper`: runs go through `.claude/bdd-gates/bdd-run.sh` |
 | `bddRawCommandRegex` | Wrapper stacks only: the raw test command Claude may not run directly |
+| `protectedFiles` | File names of the quality settings, which Claude may read and not change |
 
 Example for a multi-module Gradle build:
 

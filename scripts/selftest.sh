@@ -217,6 +217,13 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   expect_exit 0 "Claude may run the pre-commit check" tool_hook protect-gate.sh Bash command '.githooks/pre-commit'
   expect_exit 2 "a non-Bash tool call naming the mode is blocked" tool_hook protect-gate.sh ScheduleWakeup prompt 'refactor-mode on "x"'
   expect_exit 0 "Claude may read the gate" tool_hook protect-gate.sh Read file_path "$repo/scripts/refactor-mode"
+  quality=$(jq -r '.protectedSample // empty' "$stack_dir/stack.json")
+  if [ -n "$quality" ]; then
+    expect_exit 2 "Claude may not edit the quality settings ($quality)" tool_hook protect-gate.sh Edit file_path "$repo/pkg/$quality"
+    expect_exit 2 "Claude may not change them from the shell" tool_hook protect-gate.sh Bash command "sed -i s/error/off/ pkg/$quality"
+    expect_exit 0 "Claude may read the quality settings" tool_hook protect-gate.sh Read file_path "$repo/pkg/$quality"
+    expect_exit 0 "a file that only ends the same way is not protected" tool_hook protect-gate.sh Edit file_path "$repo/my$quality.txt"
+  fi
 
   # Switching by prompt: only a whole prompt in the exact form counts.
   rf_reset

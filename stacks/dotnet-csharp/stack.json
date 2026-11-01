@@ -36,6 +36,12 @@
     "checkCommand": ".claude/bdd-gates/bdd-run.sh",
     "bddCommand": "dotnet test --nologo",
     "bddLogging": "wrapper",
-    "bddRawCommandRegex": "(^|[;&|[:space:]])dotnet[[:space:]]+test([[:space:]]|$)"
-  }
+    "bddRawCommandRegex": "(^|[;&|[:space:]])dotnet[[:space:]]+test([[:space:]]|$)",
+    "protectedFiles": [
+      ".editorconfig",
+      "Directory.Build.props",
+      "reqnroll.json"
+    ]
+  },
+  "protectedSample": ".editorconfig"
 }

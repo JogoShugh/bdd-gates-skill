@@ -26,6 +26,11 @@
     "checkCommand": "./gradlew check --console=plain",
     "bddCommand": "./gradlew test --console=plain",
     "bddLogging": "native",
-    "bddRawCommandRegex": ""
-  }
+    "bddRawCommandRegex": "",
+    "protectedFiles": [
+      "detekt.yml",
+      "detekt-baseline.xml"
+    ]
+  },
+  "protectedSample": "detekt.yml"
 }

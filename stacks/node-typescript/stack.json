@@ -46,6 +46,16 @@
     "checkCommand": ".claude/bdd-gates/bdd-run.sh && npx eslint . && npx tsc --noEmit && npx depcruise src && npx knip && npx c8 check-coverage",
     "bddCommand": "npx tsc && npx c8 npx cucumber-js",
     "bddLogging": "wrapper",
-    "bddRawCommandRegex": "(^|[;&|(][[:space:]]*)([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*((npx[[:space:]]+)?([^[:space:];&|]*/)?cucumber-js|(npx[[:space:]]+)?c8[[:space:]]+(-[^[:space:]]*[[:space:]]+)*(bash|sh|npx|cucumber-js)|npm[[:space:]]+(run[[:space:]]+)?(test|t))([[:space:];&|)]|$)"
-  }
+    "bddRawCommandRegex": "(^|[;&|(][[:space:]]*)([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*((npx[[:space:]]+)?([^[:space:];&|]*/)?cucumber-js|(npx[[:space:]]+)?c8[[:space:]]+(-[^[:space:]]*[[:space:]]+)*(bash|sh|npx|cucumber-js)|npm[[:space:]]+(run[[:space:]]+)?(test|t))([[:space:];&|)]|$)",
+    "protectedFiles": [
+      "eslint.config.mjs",
+      ".dependency-cruiser.cjs",
+      ".c8rc.json",
+      "knip.json",
+      "stryker.config.json",
+      "cucumber.json",
+      "tsconfig.strict.json"
+    ]
+  },
+  "protectedSample": "eslint.config.mjs"
 }

@@ -4,7 +4,8 @@
 # `refactor-mode on "why"`, see refactor-prompt.sh), and may not change what
 # checks it: the gate scripts and config, the git hooks and where git finds
 # them, the Claude Code settings that register these hooks, or the event log
-# the checks read. Nor may Claude skip the hooks with --no-verify, or name the
+# the checks read, or the stack's own quality settings (protectedFiles in the
+# config: its linter, coverage and architecture rules). Nor may Claude skip the hooks with --no-verify, or name the
 # gate or the mode in any other tool call (scheduling, messaging, agents, MCP),
 # so Claude cannot send the author's switch prompt by another route.
 # Claude may still run the pre-commit check and the test wrapper, and read
@@ -16,6 +17,13 @@ tool=$(jq -r '.tool_name // empty' <<<"$input")
 
 # Paths and words that reach the gate. Extended regular expressions.
 protected='bdd-refactor|refactor-mode|tdd-events\.log|\.claude/settings|\.claude/bdd-gates|bdd-gates\.json|\.githooks|hooksPath|(^|/)\.git/|--no-verify'
+
+# The stack's quality settings, by file name, wherever they sit in the repo.
+config=${BDD_GATES_CONFIG:-${BDD_GATES_ROOT:-${CLAUDE_PROJECT_DIR:-.}}/.claude/bdd-gates.json}
+if [ -f "$config" ]; then
+  files=$(jq -r '(.protectedFiles // []) | map(gsub("\\."; "\\.")) | join("|")' "$config")
+  [ -z "$files" ] || protected="$protected|(^|[^A-Za-z0-9._-])($files)([^A-Za-z0-9._-]|$)"
+fi
 
 block() {
   echo "Blocked: $1" >&2

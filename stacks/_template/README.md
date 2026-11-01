@@ -34,6 +34,8 @@ supplies config values and build-side instructions. Copy this folder to
 
 4. **Which complexity linter, at its own defaults?**
    The command must exit non-zero on a violation. Do not invent thresholds.
+   List its settings in `protectedFiles`, with those of the architecture
+   check, or Claude can loosen a rule to pass it.
    Examples: Detekt, SonarAnalyzer + Roslyn, ESLint `complexity`/`max-depth`/
    `max-params`/`max-lines-per-function`, Ruff `C901`/`PLR09xx`, gocyclo/gocognit
    through golangci-lint.
