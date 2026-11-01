@@ -1,0 +1,8 @@
+{
+  "testRunner": "command",
+  "commandRunner": { "command": "npx cucumber-js" },
+  "buildCommand": "npx tsc",
+  "mutate": ["src/**/*.ts", "!src/index.ts"],
+  "reporters": ["clear-text", "progress"],
+  "timeoutMS": 30000
+}

@@ -8,10 +8,12 @@ export default tseslint.config(
   {
     files: ["**/src/**/*.ts", "src/**/*.ts"],
     ignores: ["**/*.test.ts", "**/*.spec.ts"],
-    languageOptions: { parser: tseslint.parser },
+    // Type-aware: an `any` from JSON.parse or response.json() cannot flow into typed code.
+    extends: [...tseslint.configs.strictTypeChecked],
+    languageOptions: { parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname } },
     // An eslint-disable comment must not be a way past the gate.
     linterOptions: { noInlineConfig: true },
-    plugins: { "@typescript-eslint": tseslint.plugin, sonarjs },
+    plugins: { sonarjs },
     rules: {
       complexity: "error",
       "max-depth": "error",

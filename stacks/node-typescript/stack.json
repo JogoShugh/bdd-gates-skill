@@ -1,6 +1,6 @@
 {
   "name": "node-typescript",
-  "description": "TypeScript on Node: cucumber-js, ESLint (core, SonarJS, typescript-eslint) + tsc, dependency-cruiser.",
+  "description": "TypeScript on Node: cucumber-js, ESLint (core, SonarJS, type-aware typescript-eslint) + tsc, dependency-cruiser, Knip, c8.",
   "rawCommandSample": "npx cucumber-js",
   "excludedSample": "src/generated/client.ts",
   "config": {
@@ -43,9 +43,9 @@
       "tsconfig*.json"
     ],
     "lintCommand": "npx eslint . && npx tsc --noEmit",
-    "checkCommand": ".claude/bdd-gates/bdd-run.sh && npx eslint . && npx tsc --noEmit && npx depcruise src",
-    "bddCommand": "npx cucumber-js",
+    "checkCommand": ".claude/bdd-gates/bdd-run.sh && npx eslint . && npx tsc --noEmit && npx depcruise src && npx knip && npx c8 check-coverage",
+    "bddCommand": "npx tsc && npx c8 npx cucumber-js",
     "bddLogging": "wrapper",
-    "bddRawCommandRegex": "(^|[;&|(][[:space:]]*)([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*((npx[[:space:]]+)?([^[:space:];&|]*/)?cucumber-js|npm[[:space:]]+(run[[:space:]]+)?(test|t))([[:space:];&|)]|$)"
+    "bddRawCommandRegex": "(^|[;&|(][[:space:]]*)([A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*((npx[[:space:]]+)?([^[:space:];&|]*/)?cucumber-js|(npx[[:space:]]+)?c8[[:space:]]+(-[^[:space:]]*[[:space:]]+)*(bash|sh|npx|cucumber-js)|npm[[:space:]]+(run[[:space:]]+)?(test|t))([[:space:];&|)]|$)"
   }
 }

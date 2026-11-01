@@ -112,7 +112,7 @@ Wrong patterns do not fail loudly; the gate just never matches. Run
 |---|---|---|---|---|
 | `gradle-kotlin` | Cucumber-JVM (JUnit Platform) | native, Gradle `finalizedBy` | Detekt | Konsist |
 | `dotnet-csharp` | Reqnroll (xUnit or NUnit) | wrapper, `bdd-run.sh` | Roslyn CA1502 + SonarAnalyzer | Project references + NetArchTest |
-| `node-typescript` | cucumber-js | wrapper, `bdd-run.sh` | ESLint (core, SonarJS, typescript-eslint) + `tsc` | dependency-cruiser |
+| `node-typescript` | cucumber-js | wrapper, `bdd-run.sh` | ESLint (core, SonarJS, type-aware typescript-eslint) + `tsc`, Knip, c8 | dependency-cruiser |
 
 Each stack folder holds `stack.json` (config defaults), `SETUP.md` (build
 changes), and `templates/`. Thresholds are always each tool's own defaults,

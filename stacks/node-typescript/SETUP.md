@@ -16,7 +16,8 @@ Install the tools:
 ```bash
 npm install --save-dev @cucumber/cucumber@<latest> eslint@<latest> \
   typescript-eslint@<latest> eslint-plugin-sonarjs@<latest> \
-  typescript@<latest> dependency-cruiser@<latest>
+  typescript@<latest> dependency-cruiser@<latest> knip@<latest> c8@<latest> \
+  @stryker-mutator/core@<latest>
 ```
 
 Two limits on `<latest>`:
@@ -45,7 +46,7 @@ An npm `posttest` script does not run when the tests fail, and the failed run
 is the one that matters most. This stack logs through
 `.claude/bdd-gates/bdd-run.sh`:
 
-- `bddCommand` is the raw command (`npx cucumber-js`). The wrapper runs it,
+- `bddCommand` builds, then runs the features under c8. The wrapper runs it,
   records `BDD_RUN PASS|FAIL`, and returns its exit code.
 - `checkCommand` starts with the wrapper, so every Stop gate run is logged.
 - `bddRawCommandRegex` makes the `gate-bash.sh` hook block `npx cucumber-js`,
@@ -63,6 +64,9 @@ Copy `templates/eslint.config.mjs` to the package root.
 
 - Every rule is an error, so `npx eslint .` exits non-zero on a violation.
 - Core rules and SonarJS rules use their own defaults. Do not invent numbers.
+- The `strictTypeChecked` preset reads types, so an `any` from `JSON.parse` or
+  `response.json()` cannot flow into typed code. Let raw JSON become a typed
+  value in one narrowing function.
 - `@typescript-eslint/consistent-type-assertions` with `assertionStyle: "never"`
   is a policy choice, not a threshold. No `as` casts, so raw JSON is parsed
   into types at the boundary. `as const` is not a cast and stays allowed.
@@ -72,11 +76,11 @@ Copy `templates/eslint.config.mjs` to the package root.
   hard-coded string used once passes.
 
 Copy `templates/tsconfig.strict.json` to the package root and extend it, so
-`npx tsc --noEmit` also enforces `strict`, `noUnusedLocals` and
-`noUnusedParameters`:
+`npx tsc --noEmit` also enforces `strict`, `noUncheckedIndexedAccess`,
+`noUnusedLocals` and `noUnusedParameters`. Set `sourceMap`, which c8 needs:
 
 ```json
-{ "extends": "./tsconfig.strict.json", "include": ["src"] }
+{ "extends": "./tsconfig.strict.json", "compilerOptions": { "sourceMap": true }, "include": ["src"] }
 ```
 
 Existing code may have violations at first. Tell the user instead of loosening
@@ -93,7 +97,29 @@ exits non-zero on any violation.
   module. Set its two `path` values to this repo's modules. A path that
   matches nothing passes silently, so prove it with one bad import.
 
-## 5. Features that need a live service
+## 5. Unused code and coverage: Knip and c8
+
+Copy `templates/knip.json` and `templates/.c8rc.json` to the package root.
+
+- `npx knip` fails on unused files, exports and dependencies.
+- `npx c8 check-coverage` fails below the limits in `.c8rc.json`. Run the
+  features once, then set `statements`, `lines`, `functions` and `branches`
+  to what you measured, rounded down. Do not invent numbers. A limit in the
+  check, not in the BDD run, keeps `BDD_RUN` about the features alone.
+
+## 6. Mutation testing: Stryker, outside the gate
+
+Copy `templates/stryker.config.json` to the package root and run
+`npx stryker run` by hand or in CI, before a commit that matters. It is too slow for
+the Stop gate. Coverage shows what ran; mutation shows what a test would notice.
+
+- Read the survivors. A survivor is a missing scenario or an equivalent mutant.
+- Record the score as `thresholds.break`, so it cannot fall unnoticed.
+- Tests in a sibling package need `inPlace: true`, and a `commandRunner` that
+  changes folder. Stryker then edits `src/` while it runs, so use a separate
+  worktree and do not edit there until it ends.
+
+## 7. Features that need a live service
 
 The gate runs on every Stop, so features must be fast and offline. When
 features exercise a client against a real service:
@@ -108,7 +134,7 @@ features exercise a client against a real service:
 Re-record the fixtures from the live service when its representations change.
 Fixtures match `testPatterns`, so a refactor commit cannot change them.
 
-## 6. Config review
+## 8. Config review
 
 Check `.claude/bdd-gates.json`:
 
@@ -127,7 +153,7 @@ Check `.claude/bdd-gates.json`:
 - `.tsx` code: add `*.tsx` to `prodPatterns` and `lintPatterns`, and to `files`
   in `eslint.config.mjs`.
 
-## 7. Red proof
+## 9. Red proof
 
 Each check must fail for the stated reason. Remove each probe afterward.
 
@@ -136,3 +162,5 @@ Each check must fail for the stated reason. Remove each probe afterward.
 | A scenario with no step bindings | `.claude/bdd-gates/bdd-run.sh` | Exit 1, and `.claude/tdd-events.log` gets `BDD_RUN FAIL` |
 | One function with 11 statements in `src/` | `npx eslint .` | Exit 1, `max-statements` |
 | `export const f = (v: unknown): string => v as string;` in `src/` | `npx eslint .` | Exit 1, `@typescript-eslint/consistent-type-assertions` |
+| `export const p: { a: string } = JSON.parse("{}");` in `src/` | `npx eslint .` | Exit 1, `@typescript-eslint/no-unsafe-assignment` |
+| An unused export in a new file in `src/` | `npx knip` | Exit 1 |
