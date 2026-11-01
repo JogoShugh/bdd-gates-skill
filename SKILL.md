@@ -20,6 +20,8 @@ replaces the hooks**: if a gate blocks you, satisfy it; never edit it away.
 | Logged BDD runs | stack-native hook, or `bdd-run.sh` wrapper + `gate-bash.sh` | Raw test command that would leave no `BDD_RUN` fact (wrapper stacks only) |
 | Green to stop | `Stop` → `check.sh` | Ending the turn while tests, BDD, lint, or architecture checks fail |
 | Ordering | `.githooks/pre-commit` | Commit of production code without feature write, red BDD run before the first prod write, and a green final run |
+| Refactor mode | prompt `refactor-mode on "why"` → `refactor-prompt.sh`, switched on by the user only; `pre-commit`, `commit-msg`, `post-commit` | One commit of production code with no feature change, unless tests and features are unchanged and the suite is green before and after |
+| Gate protection | `PreToolUse` every tool → `protect-gate.sh` | Switching refactor mode on; editing gate scripts, config, git hooks, settings, or the event log; `--no-verify`; any other tool call naming the gate or the mode |
 
 Layout:
 ```
@@ -32,14 +34,18 @@ scripts/   install.sh, verify-install.sh, selftest.sh
 ## Install into a repo
 
 1. Detect the stack from build files (`build.gradle.kts` → `gradle-kotlin`,
-   `*.sln`/`*.csproj` → `dotnet-csharp`). If no folder under `stacks/` fits,
+   `*.sln`/`*.csproj` → `dotnet-csharp`, `tsconfig.json` → `node-typescript`). If no
+   folder under `stacks/` fits,
    go to "Add a stack" first.
 2. Run `scripts/install.sh <stack> <repo>`. It copies `core/` to
    `<repo>/.claude/bdd-gates/`, writes `.claude/bdd-gates.json`, merges hooks
-   into `.claude/settings.json`, installs `.githooks/pre-commit`, and
-   gitignores the event log. Re-running is safe.
-3. Open `.claude/bdd-gates.json` and check the patterns against the repo's
-   real folders. Wrong patterns make the gate silently useless.
+   into `.claude/settings.json`, installs `.githooks/pre-commit`, `commit-msg`
+   and `post-commit` and `scripts/refactor-mode`, and gitignores the event
+   log. Re-running is safe.
+3. Check the patterns in `.claude/bdd-gates.json`, `testPatterns` included,
+   against the repo's real folders. Wrong patterns make the gate silently
+   useless. Once the hooks are live, `protect-gate.sh` blocks you from
+   editing this file; show the user the change to make.
 4. Follow `stacks/<stack>/SETUP.md` for the build side: BDD runner with strict
    undefined steps, BDD run logging, complexity linter at its own defaults,
    architecture test. These edits change the build, so show them to the user.
@@ -64,10 +70,21 @@ remove the old entries so gates do not run twice.
 4. Run the suite until `BDD_RUN PASS`. Fix lint findings as they appear.
 5. End the turn. The Stop gate runs the full check.
 
-A pure refactor with no new behavior is still blocked by the Gherkin-first
-gate. That is a deliberate tradeoff. Tell the user, and touch the feature
-that covers the refactored behavior (for example, a clearer scenario name).
-Never add a no-op change only to open the gate.
+A pure refactor with no new behavior has no scenario to see red. For that,
+the user switches on refactor mode for one commit, by sending the whole
+prompt `refactor-mode on "why"`. You never switch it on, and never schedule,
+send, or relay that prompt; `protect-gate.sh` blocks you. When the prompt
+arrives, report the hook's output verbatim. Ask the user, and stop until they do. With the
+mode on:
+
+1. Run the BDD suite and see it **pass** before any production write.
+2. Change production code only. No test, fixture, or feature file may differ
+   from HEAD.
+3. Run the suite after the last production write and see it **pass**.
+4. Commit. `commit-msg` adds the `Refactor-Mode:` trailer; never write it
+   yourself. The mode ends with this commit.
+
+Never add a no-op feature change only to open the gate.
 
 ## Add a stack
 

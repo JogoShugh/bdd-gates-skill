@@ -4,6 +4,9 @@
 #   selftest.sh
 set -uo pipefail
 
+# Inherited, these point every gate script at a real repo instead of the throwaway ones.
+unset BDD_GATES_ROOT BDD_GATES_CONFIG CLAUDE_PROJECT_DIR
+
 skill_dir=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -22,6 +25,13 @@ expect_exit() { # <want> <label> <cmd...>
 payload() { printf '{"tool_input":{"file_path":"%s"}}' "$1"; }
 hook() { # <script> <abs-path>
   payload "$2" | CLAUDE_PROJECT_DIR=$repo "$repo/.claude/bdd-gates/$1"
+}
+tool_hook() { # <script> <tool> <input-key> <value>
+  jq -nc --arg t "$2" --arg k "$3" --arg v "$4" '{tool_name: $t, tool_input: {($k): $v}}' \
+    | CLAUDE_PROJECT_DIR=$repo "$repo/.claude/bdd-gates/$1"
+}
+prompt_hook() { # <prompt>
+  jq -nc --arg p "$1" '{prompt: $p}' | CLAUDE_PROJECT_DIR=$repo "$repo/.claude/bdd-gates/refactor-prompt.sh"
 }
 bash_hook() { printf '{"tool_input":{"command":"%s"}}' "$2" | CLAUDE_PROJECT_DIR=$repo "$repo/.claude/bdd-gates/$1"; }
 new_repo() {
@@ -42,6 +52,20 @@ set_config() { # <jq filter>
   jq "$1" "$repo/.claude/bdd-gates.json" > "$tmp" && mv "$tmp" "$repo/.claude/bdd-gates.json"
 }
 
+# A .gitignore whose last line has no newline (common from editors and
+# templates) must not get the log path glued onto that line.
+echo "gitignore without trailing newline"
+new_repo gitignore-no-newline
+printf '.DS_Store' > "$repo/.gitignore"
+expect_exit 0 "install succeeds" "$skill_dir/scripts/install.sh" gradle-kotlin "$repo"
+if grep -qxF '.DS_Store' "$repo/.gitignore" && grep -qxF '.claude/tdd-events.log' "$repo/.gitignore"; then
+  ok "existing last line kept, log path on its own line"
+else
+  bad "gitignore lines merged: $(tr '\n' '|' < "$repo/.gitignore")"
+fi
+mkdir -p "$repo/.claude" && touch "$repo/.claude/tdd-events.log"
+[ -z "$(git -C "$repo" status --porcelain -- .claude/tdd-events.log)" ] && ok "event log is ignored by git" || bad "event log shows in git status"
+
 for stack_dir in "$skill_dir"/stacks/*/; do
   stack=$(basename "$stack_dir")
   case "$stack" in _*) continue ;; esac
@@ -50,7 +74,7 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   expect_exit 0 "install succeeds" "$skill_dir/scripts/install.sh" "$stack" "$repo"
   expect_exit 0 "install is idempotent" "$skill_dir/scripts/install.sh" "$stack" "$repo"
   count=$(jq '.hooks.PreToolUse | length' "$repo/.claude/settings.json")
-  [ "$count" = "2" ] && ok "re-install does not duplicate hooks" || bad "PreToolUse has $count entries after re-install"
+  [ "$count" = "3" ] && ok "re-install does not duplicate hooks" || bad "PreToolUse has $count entries after re-install"
 
   prod_rel=$(probe "$(jq -r '.prodPatterns[0]' "$repo/.claude/bdd-gates.json")")
   feat_rel=$(probe "$(jq -r '.featurePatterns[0]' "$repo/.claude/bdd-gates.json")")
@@ -121,6 +145,89 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   expect_exit 0 "unrelated bash command allowed" bash_hook gate-bash.sh "git status"
 
   expect_exit 0 "verify-install proves block then allow" bash -c "cd '$repo' && git reset -q && rm -f '$feat' && '$skill_dir/scripts/verify-install.sh' '$repo'"
+  # Refactor mode, through the real git hooks (core.hooksPath) in a fresh repo
+  # whose production, test and feature files are already committed.
+  echo "stack: $stack (refactor mode)"
+  new_repo "$stack-refactor"
+  "$skill_dir/scripts/install.sh" "$stack" "$repo" >/dev/null 2>&1
+  set_config '.lintCommand = "true" | .checkCommand = "true" | .bddCommand = "exit ${BDD_EXIT:-1}"'
+  test_pat=$(jq -r '.testPatterns[0]' "$repo/.claude/bdd-gates.json")
+  test_rel=$(probe "$test_pat")
+  new_test_rel=$(printf '%s' "${test_pat//\*/NewProbe}")
+  prod=$repo/$prod_rel
+  for f in "$prod_rel" "$feat_rel" "$test_rel"; do
+    mkdir -p "$(dirname "$repo/$f")"
+    echo "// $f" > "$repo/$f"
+  done
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m baseline
+  git -C "$repo" config core.hooksPath .githooks
+  mode_file=$(git -C "$repo" rev-parse --absolute-git-dir)/bdd-refactor
+
+  rf_reset() {
+    git -C "$repo" reset -q --hard
+    git -C "$repo" clean -fdq
+    rm -f "$mode_file"
+  }
+  rf_on() { (cd "$repo" && scripts/refactor-mode on "extract method") >/dev/null; }
+  rf_run() { BDD_EXIT=$1 BDD_GATES_ROOT=$repo "$repo/.claude/bdd-gates/bdd-run.sh" >/dev/null 2>&1; }
+  rf_write() { echo "// $RANDOM" >> "$prod"; hook log-event.sh "$prod" >/dev/null; }
+  rf_commit() { git -C "$repo" add "$prod_rel" && git -C "$repo" commit -q -m "${1:-tidy}"; }
+
+  rf_reset; rf_on; rf_run 0
+  expect_exit 0 "refactor mode lets the prod write through" hook gherkin-first.sh "$prod"
+  rf_write; rf_run 0
+  expect_exit 0 "refactor commit passes: green, change, green" rf_commit
+  git -C "$repo" log -1 --format=%B | grep -qx 'Refactor-Mode: extract method' \
+    && ok "refactor commit carries the trailer" || bad "no Refactor-Mode trailer: $(git -C "$repo" log -1 --format=%B | tr '\n' '|')"
+  [ ! -f "$mode_file" ] && ok "post-commit switches refactor mode off" || bad "refactor mode still on after the commit"
+  rf_write; rf_run 0
+  expect_exit 1 "refactor mode is not reused for a second commit" rf_commit
+
+  rf_reset; rf_on; rf_run 0; rf_write; echo "// changed" >> "$repo/$test_rel"; rf_run 0
+  expect_exit 1 "refactor refused: a test file changed" rf_commit
+  rf_reset; rf_on; rf_run 0; rf_write; echo "# changed" >> "$repo/$feat_rel"; rf_run 0
+  expect_exit 1 "refactor refused: a feature file changed" rf_commit
+  rf_reset; rf_on; rf_run 0; rf_write
+  mkdir -p "$(dirname "$repo/$new_test_rel")"; echo "// new" > "$repo/$new_test_rel"; rf_run 0
+  expect_exit 1 "refactor refused: a new untracked test" rf_commit
+  rf_reset; rf_on; rf_write; rf_run 0
+  expect_exit 1 "refactor refused: no passing run before the first prod write" rf_commit
+  rf_reset; rf_on; rf_run 0; rf_write; rf_run 0; rf_write
+  expect_exit 1 "refactor refused: prod written after the last run" rf_commit
+  rf_reset; rf_on; rf_run 0; rf_write; rf_run 1
+  expect_exit 1 "refactor refused: the last run failed" rf_commit
+  rf_reset; rf_on
+  git -C "$repo" -c core.hooksPath=/dev/null commit -q --allow-empty -m "moved on"
+  rf_run 0; rf_write; rf_run 0
+  expect_exit 1 "refactor refused: HEAD moved since the mode was switched on" rf_commit
+
+  rf_reset
+  echo "notes" > "$repo/notes.txt"
+  git -C "$repo" add notes.txt
+  expect_exit 1 "forged Refactor-Mode trailer refused" git -C "$repo" commit -q -m "$(printf 'tidy\n\nRefactor-Mode: forged')"
+  rf_reset
+  expect_exit 2 "normal mode still blocks the prod write" hook gherkin-first.sh "$prod"
+  rf_run 0; rf_write; rf_run 0
+  expect_exit 1 "normal mode still refuses a prod commit with no feature" rf_commit
+
+  expect_exit 2 "Claude may not switch refactor mode on" tool_hook protect-gate.sh Bash command 'scripts/refactor-mode on "x"'
+  expect_exit 2 "Claude may not skip the hooks" tool_hook protect-gate.sh Bash command 'git commit --no-verify -m x'
+  expect_exit 2 "Claude may not edit the gate scripts" tool_hook protect-gate.sh Edit file_path "$repo/.claude/bdd-gates/lib.sh"
+  expect_exit 0 "Claude may run the pre-commit check" tool_hook protect-gate.sh Bash command '.githooks/pre-commit'
+  expect_exit 2 "a non-Bash tool call naming the mode is blocked" tool_hook protect-gate.sh ScheduleWakeup prompt 'refactor-mode on "x"'
+  expect_exit 0 "Claude may read the gate" tool_hook protect-gate.sh Read file_path "$repo/scripts/refactor-mode"
+
+  # Switching by prompt: only a whole prompt in the exact form counts.
+  rf_reset
+  out=$(prompt_hook 'refactor-mode on "rename"')
+  [ -f "$mode_file" ] && printf '%s' "$out" | grep -q 'Refactor mode is on' \
+    && ok "whole prompt switches refactor mode on" || bad "prompt did not switch the mode on: $out"
+  prompt_hook 'refactor-mode off' >/dev/null
+  [ ! -f "$mode_file" ] && ok "whole prompt switches refactor mode off" || bad "prompt did not switch the mode off"
+  out=$(prompt_hook 'please explain what refactor-mode on "x" does')
+  [ ! -f "$mode_file" ] && [ -z "$out" ] \
+    && ok "a sentence that mentions the mode switches nothing" || bad "a mention switched the mode: $out"
 done
 
 echo ""

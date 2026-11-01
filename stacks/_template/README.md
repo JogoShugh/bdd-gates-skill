@@ -9,9 +9,11 @@ supplies config values and build-side instructions. Copy this folder to
 ## The five questions
 
 1. **Where do production code and features live?**
-   `prodPatterns`, `prodExcludePatterns`, `featurePatterns`. Patterns are shell
-   case globs on repo-relative paths, and `*` crosses folders. Exclude step
-   definitions, test code, generated code, and build output.
+   `prodPatterns`, `prodExcludePatterns`, `featurePatterns`, `testPatterns`.
+   Patterns are shell case globs on repo-relative paths, and `*` crosses
+   folders. Exclude step definitions, test code, generated code, and build
+   output. `testPatterns` names test code and fixtures, which a refactor
+   commit must leave unchanged.
 
 2. **Which BDD runner, and does it fail on undefined steps?**
    The red step only proves something if a scenario with no bindings fails,

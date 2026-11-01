@@ -22,6 +22,8 @@ gates and to work inside them. This README is for the people who own the repo.
 | Raw test command | Before Claude runs a shell command | On wrapper-logged stacks, blocks a raw test command that would skip the log |
 | Green to stop | When Claude tries to end its turn | Runs the full check; Claude keeps working until it passes |
 | TDD ordering | `git commit`, from any tool or terminal | Rejects a commit of production code unless the log shows a feature write, then a failing BDD run, before the first production write, and a passing final run |
+| Refactor mode | `git commit`, after the author switches it on | Lets one commit change production code with no feature change, if no test or feature file changed, the suite passed before the first production write, and the last run passed after the last one |
+| Gate protection | Before every Claude tool call | Blocks Claude from switching refactor mode on, changing the gate's scripts, config, git hooks, settings or event log, and skipping hooks |
 
 The event log is plain text, one fact per line, and gitignored:
 
@@ -40,7 +42,7 @@ Requirements: `bash` (3.2 or later, so stock macOS works), `git`, `jq`.
 SKILL=path/to/bdd-gates
 
 # 1. Install the language-agnostic core for your stack.
-$SKILL/scripts/install.sh gradle-kotlin /path/to/repo     # or dotnet-csharp
+$SKILL/scripts/install.sh gradle-kotlin /path/to/repo     # or dotnet-csharp or node-typescript
 
 # 2. Check the file patterns in /path/to/repo/.claude/bdd-gates.json.
 
@@ -64,8 +66,14 @@ and shows you the build changes before it makes them.
 | `.claude/bdd-gates/*.sh` | Core scripts, copied in and committed, so every teammate gets the same gates |
 | `.claude/bdd-gates.json` | Per-repo config, created from the stack defaults; kept if it already exists |
 | `.claude/settings.json` | Hook entries merged in; hooks the installer did not write are left alone |
-| `.githooks/pre-commit` | Ordering check; an unrelated existing hook is kept, and ours goes to `pre-commit.bdd-gates` |
+| `.githooks/pre-commit` | Ordering check, and the refactor check when refactor mode is on |
+| `.githooks/commit-msg` | Adds the `Refactor-Mode:` trailer in refactor mode; refuses it on any other commit |
+| `.githooks/post-commit` | Switches refactor mode off after any commit |
+| `scripts/refactor-mode` | The author's switch for refactor mode |
 | `.gitignore` | Adds `.claude/tdd-events.log` |
+
+An existing git hook or `scripts/refactor-mode` that the installer did not
+write is kept, and ours goes beside it as `<name>.bdd-gates` to merge by hand.
 
 Re-running the installer is safe. It refreshes the scripts and replaces its
 own hook entries without duplicating them.
@@ -80,6 +88,7 @@ scripts are identical in every repo.
 | `prodPatterns` | Production source files. Shell globs on repo-relative paths; `*` also crosses folders |
 | `prodExcludePatterns` | Paths that match `prodPatterns` but are not production: tests, step definitions, generated code, build output |
 | `featurePatterns` | Gherkin feature files |
+| `testPatterns` | Test code and test fixtures. A refactor commit may not change these, nor feature files |
 | `lintPatterns` | Files whose edit re-runs the linter |
 | `lintCommand` | Fast complexity check; non-zero exit means a violation |
 | `checkCommand` | Full check for the Stop gate: tests, BDD, lint, architecture |
@@ -103,6 +112,7 @@ Wrong patterns do not fail loudly; the gate just never matches. Run
 |---|---|---|---|---|
 | `gradle-kotlin` | Cucumber-JVM (JUnit Platform) | native, Gradle `finalizedBy` | Detekt | Konsist |
 | `dotnet-csharp` | Reqnroll (xUnit or NUnit) | wrapper, `bdd-run.sh` | Roslyn CA1502 + SonarAnalyzer | Project references + NetArchTest |
+| `node-typescript` | cucumber-js | wrapper, `bdd-run.sh` | ESLint (core, SonarJS, type-aware typescript-eslint) + `tsc`, Knip, c8 | dependency-cruiser |
 
 Each stack folder holds `stack.json` (config defaults), `SETUP.md` (build
 changes), and `templates/`. Thresholds are always each tool's own defaults,
@@ -136,6 +146,48 @@ The template README lists candidate tools for TypeScript, Python, and Go.
 4. Run the suite until it passes. Fix lint findings as they appear.
 5. Commit. The pre-commit check confirms the sequence.
 
+## Refactor mode
+
+A refactor changes the structure of production code, not its behavior. It has
+no new scenario, so it cannot be seen red first. For that case, you (never
+Claude) switch on refactor mode for one commit. Send one of these as a whole
+prompt, from any Claude Code client, remote control included:
+
+```
+refactor-mode on "extract the pricing rules from Checkout"
+refactor-mode status
+refactor-mode off
+```
+
+A `UserPromptSubmit` hook (`refactor-prompt.sh`) runs `scripts/refactor-mode`
+with those arguments, and Claude reports its output. Only a whole prompt in
+exactly this form counts; a sentence that mentions the mode switches nothing.
+In a terminal, `scripts/refactor-mode on "why"` works too.
+
+The mode starts from a clean working tree and is bound to the current HEAD.
+While it is on, Claude may write production code with no feature change, and
+the pre-commit check accepts the commit only if:
+
+- no feature file and no test file (`testPatterns`) differs from HEAD, staged,
+  unstaged, or untracked;
+- a BDD run passed after the mode was switched on, before the first
+  production write;
+- the last BDD run passed, after the last production write.
+
+Green, change, green. The commit gets a `Refactor-Mode: <why>` trailer, so
+`git log --grep Refactor-Mode` lists every refactor. The trailer is refused on
+any other commit. The mode ends with the next commit, and is void if HEAD
+moves first.
+
+The state file lives in the git directory, not the working tree. A
+`PreToolUse` hook (`protect-gate.sh`) runs before every tool. It blocks Claude
+from running the switch, from touching the gate's scripts, config, git hooks,
+Claude Code settings or event log, and from `--no-verify` or `git commit -n`.
+Any other tool call whose input names the gate or the mode is blocked too
+(scheduling, messaging, agents, MCP), so Claude cannot send the switch prompt
+by another route. Claude may still read these files, run
+`.githooks/pre-commit`, and run `bdd-run.sh`.
+
 ## Testing the skill
 
 ```bash
@@ -144,8 +196,9 @@ scripts/selftest.sh
 
 No mocks. For every stack folder, the selftest installs into a real
 throwaway git repo and runs the real scripts end to end. It checks blocking,
-logging, the pre-commit ordering rules, the lint and Stop gates, the raw
-command gate, and `verify-install.sh`. New stack folders are picked up
+logging, the pre-commit ordering rules, refactor mode through the real git
+hooks, gate protection, the lint and Stop gates, the raw command gate, and
+`verify-install.sh`. New stack folders are picked up
 automatically.
 
 ## Sharing
@@ -165,9 +218,14 @@ repo keeps working even for teammates who do not have the skill.
 
 ## Known limits and tradeoffs
 
-- **Refactors are blocked too.** A pure refactor with no new behavior still
-  needs a feature change in flight. This is deliberate: a slightly annoying
-  gate beats a rule that drifts silently.
+- **Refactors need the author.** Only you can switch on refactor mode, one
+  commit at a time. Claude cannot open it for itself.
+- **A prompt does not say where it came from.** If another Claude session can
+  deliver a message into this session as a prompt, it could switch refactor
+  mode. Claude in this session cannot, because of `protect-gate.sh`.
+- **Gate protection is a pattern match.** `protect-gate.sh` matches paths and
+  words in Claude's commands. It stops drift, not a determined attempt to
+  hide a path, so review commits to the gate files as usual.
 - **Ordering is per commit, not per scenario.** The check catches skipped
   Gherkin. It does not prove every file was test-driven on its own.
 - **The commit window starts after the last commit's second.** Events
@@ -196,7 +254,7 @@ and `.claude/bdd-gates.json` as you would a CI pipeline change.
 bdd-gates/
 ├── SKILL.md                 instructions Claude loads
 ├── README.md                this file
-├── core/                    language-agnostic hook scripts, pre-commit, hooks.json
+├── core/                    language-agnostic hook scripts, git hooks, refactor-mode, hooks.json
 ├── scripts/
 │   ├── install.sh           install the core into a repo
 │   ├── verify-install.sh    live block-then-allow proof in a repo
@@ -204,5 +262,6 @@ bdd-gates/
 └── stacks/
     ├── _template/           how to add a language
     ├── gradle-kotlin/
+    ├── node-typescript/
     └── dotnet-csharp/
 ```

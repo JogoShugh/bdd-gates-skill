@@ -14,6 +14,9 @@
     "featurePatterns": [
       "<glob for .feature files>"
     ],
+    "testPatterns": [
+      "<globs for test code and test fixtures, which a refactor must leave unchanged>"
+    ],
     "lintPatterns": [
       "<globs whose edit should re-run the linter>"
     ],

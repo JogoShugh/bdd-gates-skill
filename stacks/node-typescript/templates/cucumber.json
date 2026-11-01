@@ -1,0 +1,7 @@
+{
+  "default": {
+    "strict": true,
+    "paths": ["features/**/*.feature"],
+    "import": ["features/step_definitions/**/*.mjs", "features/support/**/*.mjs"]
+  }
+}

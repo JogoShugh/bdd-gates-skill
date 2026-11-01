@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # PreToolUse (Edit|Write|MultiEdit). Blocks a write to production code unless
-# a feature file already has an in-flight change. Exit 2 blocks the tool call
+# a feature file already has an in-flight change, or the author switched
+# refactor mode on (scripts/refactor-mode). Exit 2 blocks the tool call
 # and sends stderr back to Claude.
 set -o pipefail
 . "$(dirname "$0")/lib.sh"
@@ -13,6 +14,8 @@ bdd_load
 rel=$(bdd_rel "$file_path")
 bdd_is_prod "$rel" || exit 0
 bdd_features_dirty && exit 0
+# The author switched refactor mode on: pre-commit checks its own terms.
+bdd_refactor_on && exit 0
 
 cat >&2 <<EOF
 Blocked: about to modify production code ($rel) with no feature file change in this changeset yet.

@@ -1,0 +1,4 @@
+{
+  "project": ["src/**/*.ts"],
+  "ignoreDependencies": ["@stryker-mutator/command-runner", "c8"]
+}

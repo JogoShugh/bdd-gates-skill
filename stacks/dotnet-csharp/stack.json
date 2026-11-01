@@ -19,6 +19,12 @@
     "featurePatterns": [
       "*.feature"
     ],
+    "testPatterns": [
+      "*.Tests/*",
+      "*.Specs/*",
+      "*.IntegrationTests/*",
+      "tests/*"
+    ],
     "lintPatterns": [
       "*.cs",
       "*.csproj",

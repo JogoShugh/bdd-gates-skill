@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Refactor mode for the bdd-gates TDD check. For the author only, sent as a
+# whole prompt from any Claude Code client, remote control included
+# (.claude/bdd-gates/refactor-prompt.sh runs this script):
+#   refactor-mode on "why this is a refactor"
+#   refactor-mode off
+#   refactor-mode status
+# A `!` shell command does not run over remote control; the prompt form does.
+# A refactor changes the structure of production code and not its behaviour,
+# so it has no new scenario and cannot be seen red first. Refactor mode lets
+# ONE commit change production code without a feature change or a red run,
+# on terms .githooks/pre-commit checks:
+#   - it starts from a clean working tree;
+#   - no feature file and no test file may differ from HEAD;
+#   - a BDD run passes before the first production write, and the last run,
+#     after the last write, passes: green, change, green;
+#   - the commit gets a "Refactor-Mode: <why>" trailer (.githooks/commit-msg),
+#     so `git log --grep Refactor-Mode` lists every refactor commit.
+# It is bound to the current HEAD and ends with the next commit
+# (.githooks/post-commit). A PreToolUse hook (.claude/bdd-gates/protect-gate.sh)
+# blocks Claude from running this script or touching the mode's file.
+set -euo pipefail
+root=$(git rev-parse --show-toplevel)
+export BDD_GATES_ROOT=$root
+. "$root/.claude/bdd-gates/lib.sh"
+file=$(bdd_refactor_file)
+
+case "${1:-status}" in
+  on)
+    reason=${2:-}
+    if [ -z "$reason" ]; then
+      echo 'usage: scripts/refactor-mode on "why this is a refactor"' >&2
+      exit 1
+    fi
+    if [ -n "$(git status --porcelain -uall)" ]; then
+      echo "refactor mode starts from a clean working tree; commit or stash first" >&2
+      exit 1
+    fi
+    head=$(git rev-parse HEAD)
+    printf 'head=%s\nat=%s\nreason=%s\n' "$head" "$(bdd_now)" "$reason" > "$file"
+    bdd_append "REFACTOR_ON head=$head"
+    echo "Refactor mode is on for one commit on ${head:0:7}: $reason"
+    ;;
+  off)
+    rm -f "$file"
+    bdd_append "REFACTOR_OFF"
+    echo "Refactor mode is off."
+    ;;
+  status)
+    if ! bdd_refactor_present; then
+      echo "Refactor mode is off."
+    elif bdd_refactor_on; then
+      echo "Refactor mode is on for the next commit: $(bdd_refactor_field reason)"
+    else
+      echo "Refactor mode was switched on for $(bdd_refactor_field head), but HEAD has moved: it is void."
+    fi
+    ;;
+  *)
+    echo 'usage: scripts/refactor-mode on "why" | off | status' >&2
+    exit 1
+    ;;
+esac

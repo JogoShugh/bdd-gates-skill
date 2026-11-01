@@ -1,0 +1,7 @@
+{
+  "all": true,
+  "src": ["src"],
+  "include": ["src/**/*.ts", "dist/**/*.js"],
+  "exclude": ["**/*.d.ts", "src/index.ts"],
+  "reporter": ["text"]
+}
