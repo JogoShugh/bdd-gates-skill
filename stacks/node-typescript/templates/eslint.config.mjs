@@ -27,6 +27,15 @@ export default tseslint.config(
       // Policy, not a threshold: no casts, so raw JSON is parsed into types at the boundary.
       "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
       "@typescript-eslint/no-explicit-any": "error",
+      // Policy, not a threshold: a word inside a function is a name to give, in a top-level const.
+      // Left alone: typeof checks, and the sentence an error carries.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: ":function Literal[raw=/^[\"'].*[A-Za-z]/]:not(BinaryExpression[left.operator='typeof'] > Literal):not(NewExpression > Literal)",
+          message: "Name this string in a top-level const.",
+        },
+      ],
     },
   },
 );

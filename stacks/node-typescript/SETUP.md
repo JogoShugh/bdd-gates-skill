@@ -70,6 +70,9 @@ Copy `templates/eslint.config.mjs` to the package root.
 - `@typescript-eslint/consistent-type-assertions` with `assertionStyle: "never"`
   is a policy choice, not a threshold. No `as` casts, so raw JSON is parsed
   into types at the boundary. `as const` is not a cast and stays allowed.
+- `no-restricted-syntax` is a policy choice too: a string with a letter in it, inside
+  a function, fails. Name it in a top-level const. `typeof` checks and the
+  sentence an error carries are left alone, and template strings pass.
 - `noInlineConfig` makes ESLint ignore `eslint-disable` comments, so a
   violation cannot be switched off in the file that has it.
 - `sonarjs/no-duplicate-string` finds a string only when it is repeated. One
