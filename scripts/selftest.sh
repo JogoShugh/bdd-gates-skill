@@ -4,6 +4,9 @@
 #   selftest.sh
 set -uo pipefail
 
+# Inherited, these point every gate script at a real repo instead of the throwaway ones.
+unset BDD_GATES_ROOT BDD_GATES_CONFIG CLAUDE_PROJECT_DIR
+
 skill_dir=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
