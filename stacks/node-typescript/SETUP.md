@@ -120,6 +120,10 @@ Check `.claude/bdd-gates.json`:
   and the lint and architecture parts of `checkCommand`.
 - Features or step definitions in a folder the defaults do not name: add it
   to `testPatterns`, and to `prodExcludePatterns` if it is under `src/`.
+- Repo that already has a stack: `install.sh` keeps the existing config, so
+  merge by hand. Add these patterns to the existing lists and chain the
+  commands. Keep `bddCommand` to the features only, if the other stack logs
+  its own runs natively, or each of its runs is logged twice.
 - `.tsx` code: add `*.tsx` to `prodPatterns` and `lintPatterns`, and to `files`
   in `eslint.config.mjs`.
 
