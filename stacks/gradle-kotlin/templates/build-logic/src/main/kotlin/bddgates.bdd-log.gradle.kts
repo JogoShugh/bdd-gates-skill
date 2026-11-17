@@ -4,9 +4,10 @@
 //     to .claude/bdd-gates.json, so a build nested anywhere in the repo records to the same log.
 //   - PASS or FAIL comes from every JUnit XML of every Test task that ran (test, or a liveTest), summed: a module
 //     may run its features in several suites, or through the Cucumber engine directly.
-//   - Each scenario's own result comes from Cucumber's message streams: every build/cucumber/*.ndjson, one per
-//     suite (each runner's "message:build/cucumber/<name>.ndjson" plugin). They are cleared before each run, so
-//     an old stream never stands in for a new run.
+//   - Each scenario's own result comes from Cucumber's message streams under build/cucumber/: one per Test task
+//     when the Cucumber engine runs directly (this plugin sets cucumber.plugin for it), and one per suite class
+//     (its own "message:build/cucumber/<Suite>.ndjson", which takes precedence). Only streams written in this
+//     build count, so an old one never stands in for a new run; record-run.sh deletes them once read.
 //   - finalizedBy, not doLast: Gradle skips later actions when the test task fails, the run that matters most.
 //   - A compile failure is recorded as FAIL reason=compile, which the pre-commit check does not count as red.
 //   - A Test task that was up to date ran nothing, and `test --tests SomeClass` that leaves the features out is
@@ -15,8 +16,10 @@ val gateRoot: File = generateSequence(rootDir) { it.parentFile }
     .firstOrNull { File(it, ".claude/bdd-gates.json").exists() } ?: rootDir
 val module: String = project.path.removePrefix(":").ifEmpty { rootProject.name }
 val streams: File = layout.buildDirectory.dir("cucumber").get().asFile
+val buildStarted: Long = System.currentTimeMillis()
 
-fun ndjson(): List<File> = streams.listFiles { file -> file.name.endsWith(".ndjson") }.orEmpty().toList()
+fun ndjson(): List<File> = streams.listFiles { file -> file.name.endsWith(".ndjson") }.orEmpty()
+    .filter { it.lastModified() >= buildStarted }
 
 fun record(status: String, vararg fields: String) {
     val recorder = File(gateRoot, ".claude/bdd-gates/record-run.sh")
@@ -66,7 +69,8 @@ val logBddRun by tasks.registering {
 }
 
 tasks.withType<Test>().configureEach {
-    doFirst { ndjson().forEach { it.delete() } }
+    // For the Cucumber engine run directly; a suite class's own plugin setting takes precedence.
+    systemProperty("cucumber.plugin", "message:${File(streams, "$name.ndjson").path}")
     finalizedBy(logBddRun)
 }
 listOf("compileKotlin", "compileTestKotlin").forEach { name ->
