@@ -96,6 +96,8 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   expect_exit 2 "feature lint fails a feature file with no scenario" hook lint.sh "$feat"
   printf 'Feature: probe\n  Scenario: no outcome\n    Given a start\n    When it acts\n    And again\n' > "$feat"
   expect_exit 2 "feature lint fails a scenario with no Then" hook lint.sh "$feat"
+  printf 'Feature: probe\n  Scenario: arming\n    When action "arm" is sent\n    Then it answers 400\n\n  Scenario: launching\n    When action "launch" is sent\n    Then it answers 404\n' > "$feat"
+  expect_exit 2 "feature lint fails two scenarios that differ only in values (an outline)" hook lint.sh "$feat"
   printf "$scenario" > "$feat"
   expect_exit 0 "feature lint passes a scenario with a Then" hook lint.sh "$feat"
   expect_exit 0 "prod write allowed once a feature file is untracked" hook gherkin-first.sh "$prod"

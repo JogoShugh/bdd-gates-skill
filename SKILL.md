@@ -17,7 +17,7 @@ replaces the hooks**: if a gate blocks you, satisfy it; never edit it away.
 | Gherkin first | `PreToolUse` Edit/Write → `gherkin-first.sh` | Production write while no scenario has been added or had its steps changed against HEAD (comments, tags, descriptions and blank lines do not count) |
 | Event log | `PostToolUse` → `log-event.sh` | Nothing; appends `FEATURE_WRITE` / `MAIN_WRITE` to `.claude/tdd-events.log` |
 | Fast lint | `PostToolUse` → `lint.sh` | Reports complexity violations right after the edit (exit 2) |
-| Feature lint | `PostToolUse` → `lint.sh`, and `pre-commit` | A feature file with no scenario, an unnamed or duplicate scenario, a scenario with no `Then`, an outline with no examples (gplint) |
+| Feature lint | `PostToolUse` → `lint.sh`, and `pre-commit` | A feature file with no scenario, an unnamed or duplicate scenario, a scenario with no `Then`, an outline with no examples, two scenarios whose steps differ only in values (one Scenario Outline) (gplint) |
 | Logged BDD runs | stack-native hook, or `bdd-run.sh` wrapper + `gate-bash.sh` | Raw test command that would leave no `BDD_RUN` fact (wrapper stacks only) |
 | Green to stop | `Stop` → `check.sh` | Ending the turn while tests, BDD, lint, or architecture checks fail |
 | Ordering | `.githooks/pre-commit` | Commit of production code without a staged scenario change, a feature write and a BDD run that failed on behaviour (not `reason=compile`) before the first prod write, and a green final run |

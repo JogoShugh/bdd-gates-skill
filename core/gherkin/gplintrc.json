@@ -4,12 +4,16 @@
   "no-unnamed-features": "error",
   "no-unnamed-scenarios": "error",
   "no-dupe-feature-names": "error",
-  "no-dupe-scenario-names": ["error", "in-feature"],
+  "no-dupe-scenario-names": [
+    "error",
+    "in-feature"
+  ],
   "no-empty-background": "error",
   "no-background-only-scenario": "error",
   "no-scenario-outlines-without-examples": "error",
   "no-examples-in-scenarios": "error",
   "no-unused-variables": "error",
   "keywords-in-logical-order": "error",
-  "scenario-has-then": "error"
+  "scenario-has-then": "error",
+  "no-same-shape-scenarios": "error"
 }

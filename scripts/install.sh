@@ -32,9 +32,10 @@ echo "core scripts -> .claude/bdd-gates/"
 # 1b. The Gherkin tools (Node): what changed scenario by scenario, and the feature lint. Their
 #     node_modules stay out of git; each clone installs them from the lockfile.
 mkdir -p "$dest/gherkin/rules"
-for f in package.json package-lock.json features.mjs gplintrc.json rules/scenario-has-then.js .gitignore; do
+for f in package.json package-lock.json features.mjs gplintrc.json .gitignore; do
   cp "$skill_dir/core/gherkin/$f" "$dest/gherkin/$f"
 done
+cp "$skill_dir"/core/gherkin/rules/*.js "$dest/gherkin/rules/"
 command -v npm >/dev/null || { echo "npm (Node 18+) is required for the Gherkin tools" >&2; exit 1; }
 (cd "$dest/gherkin" && npm ci --omit=dev --no-audit --no-fund --silent) \
   || { echo "npm ci failed in .claude/bdd-gates/gherkin" >&2; exit 1; }
