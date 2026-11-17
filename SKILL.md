@@ -14,18 +14,27 @@ replaces the hooks**: if a gate blocks you, satisfy it; never edit it away.
 
 | Gate | Mechanism | Blocks |
 |---|---|---|
-| Gherkin first | `PreToolUse` Edit/Write → `gherkin-first.sh` | Production write while no feature file is staged, unstaged, or untracked |
+| Gherkin first | `PreToolUse` Edit/Write → `gherkin-first.sh` | Production write while no scenario has been added or had its steps changed against HEAD (comments, tags, descriptions and blank lines do not count) |
 | Event log | `PostToolUse` → `log-event.sh` | Nothing; appends `FEATURE_WRITE` / `MAIN_WRITE` to `.claude/tdd-events.log` |
 | Fast lint | `PostToolUse` → `lint.sh` | Reports complexity violations right after the edit (exit 2) |
+| Feature lint | `PostToolUse` → `lint.sh`, and `pre-commit` | A feature file with no scenario, an unnamed or duplicate scenario, a scenario with no `Then`, an outline with no examples (gplint) |
 | Logged BDD runs | stack-native hook, or `bdd-run.sh` wrapper + `gate-bash.sh` | Raw test command that would leave no `BDD_RUN` fact (wrapper stacks only) |
 | Green to stop | `Stop` → `check.sh` | Ending the turn while tests, BDD, lint, or architecture checks fail |
-| Ordering | `.githooks/pre-commit` | Commit of production code without feature write, red BDD run before the first prod write, and a green final run |
+| Ordering | `.githooks/pre-commit` | Commit of production code without a staged scenario change, a feature write and a BDD run that failed on behaviour (not `reason=compile`) before the first prod write, and a green final run |
 | Refactor mode | prompt `refactor-mode on "why"` → `refactor-prompt.sh`, switched on by the user only; `pre-commit`, `commit-msg`, `post-commit` | One commit of production code with no feature change, unless tests and features are unchanged and the suite is green before and after |
 | Gate protection | `PreToolUse` every tool → `protect-gate.sh` | Switching refactor mode on; editing gate scripts, config, git hooks, settings, or the event log; `--no-verify`; any other tool call naming the gate or the mode |
+
+What a scenario change is: the core reads the Gherkin the way Cucumber does
+(`@cucumber/gherkin`, in `core/gherkin/`) and compares Cucumber's pickles,
+one per Scenario and one per Examples row, Background steps included, at HEAD
+and now. A pickle is known by its file, scenario name and Examples row; it
+changed when its steps did. So the gates need **Node 18+** in every stack;
+`install.sh` runs `npm ci` for them from a lockfile.
 
 Layout:
 ```
 core/      language-agnostic scripts, identical for every stack
+core/gherkin/  features.mjs (scenario changes, feature lint), gplint rules and config, lockfile
 stacks/    one folder per language: stack.json (config defaults), SETUP.md, templates/
 stacks/_template/  how to add a language
 scripts/   install.sh, verify-install.sh, selftest.sh

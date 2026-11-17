@@ -10,9 +10,21 @@ file_path=$(bdd_hook_file_path)
 bdd_has_config || exit 0
 bdd_load
 
+rel=$(bdd_rel "$file_path")
+
+# A feature file: gplint with bdd-gates' rules (every scenario named, has a Then, outlines have examples...).
+if bdd_is_feature "$rel"; then
+  [ -f "$(bdd_root)/$rel" ] || exit 0
+  bdd_gherkin_ready || { bdd_gherkin_missing; exit 2; }
+  out=$(bdd_lint_features "$rel" 2>&1) && exit 0
+  echo "Feature lint failed ($rel):" >&2
+  echo "$out" | tail -n 60 >&2
+  exit 2
+fi
+
 cmd=$(bdd_value lintCommand)
 [ -n "$cmd" ] || exit 0
-bdd_is_lintable "$(bdd_rel "$file_path")" || exit 0
+bdd_is_lintable "$rel" || exit 0
 
 out=$(cd "$(bdd_root)" && bash -c "$cmd" 2>&1)
 ec=$?

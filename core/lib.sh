@@ -70,6 +70,51 @@ bdd_features_dirty() {
   return 1
 }
 
+# The Gherkin tools (gherkin/features.mjs, Node), installed beside these scripts.
+bdd_gherkin() { echo "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gherkin"; }
+bdd_gherkin_ready() {
+  command -v node >/dev/null 2>&1 && [ -d "$(bdd_gherkin)/node_modules/@cucumber/gherkin" ]
+}
+bdd_gherkin_missing() {
+  echo "bdd-gates needs Node 18+ and its Gherkin tools: re-run the skill's scripts/install.sh," \
+    "or: npm ci --prefix .claude/bdd-gates/gherkin" >&2
+}
+
+# Feature files that differ from HEAD: "worktree" (staged, unstaged, untracked or deleted) or "staged".
+bdd_changed_features() {
+  local p line
+  if [ "$1" = staged ]; then
+    while IFS= read -r p; do
+      bdd_is_feature "$p" && echo "$p"
+    done < <(cd "$(bdd_root)" && git diff --cached --name-only --no-renames 2>/dev/null)
+  else
+    while IFS= read -r line; do
+      p=${line:3}
+      p=${p##* -> }
+      p=${p#\"}
+      p=${p%\"}
+      bdd_is_feature "$p" && echo "$p"
+    done < <(cd "$(bdd_root)" && git status --porcelain -uall --no-renames 2>/dev/null)
+  fi
+}
+
+# What changed in the scenarios against HEAD ("worktree" or "staged"), as features.mjs prints it (JSON).
+bdd_feature_changes() {
+  local paths=() p
+  while IFS= read -r p; do [ -n "$p" ] && paths+=("$p"); done < <(bdd_changed_features "$1")
+  (cd "$(bdd_root)" && node --no-warnings "$(bdd_gherkin)/features.mjs" changes --source "$1" -- \
+    ${paths[@]+"${paths[@]}"})
+}
+
+# The number of scenarios (Cucumber pickles) added, or with their steps changed, in features.mjs's JSON.
+bdd_scenarios_touched() { jq '(.added | length) + (.changed | length)' <<<"$1"; }
+
+# Lints feature files with gplint and bdd-gates' rules; prints the findings, false when any fails.
+bdd_lint_features() {
+  [ $# -gt 0 ] || return 0
+  (cd "$(bdd_root)" && node --no-warnings "$(bdd_gherkin)/features.mjs" lint -- "$@")
+}
+
 bdd_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # Appends one fact to the event log: "<utc-timestamp> <EVENT> <detail...>".

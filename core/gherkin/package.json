@@ -1,0 +1,14 @@
+{
+  "name": "bdd-gates-gherkin",
+  "private": true,
+  "description": "bdd-gates: what changed in the Gherkin, scenario by scenario, and a lint of the feature files. Installed into .claude/bdd-gates/gherkin by scripts/install.sh.",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@cucumber/gherkin": "42.0.1",
+    "@cucumber/messages": "34.2.1",
+    "gplint": "2.6.2"
+  }
+}

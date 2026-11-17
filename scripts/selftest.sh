@@ -46,6 +46,8 @@ new_repo() {
     git -C "$repo" commit -q --allow-empty -m init
 }
 probe() { printf '%s' "${1//\*/Probe}"; }
+# A feature with a real scenario: the gates count scenarios, not files.
+scenario='Feature: probe\n  Scenario: a probe\n    Given a start\n    When it acts\n    Then it ends\n'
 set_config() { # <jq filter>
   local tmp
   tmp=$(mktemp)
@@ -89,7 +91,13 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   fi
 
   mkdir -p "$(dirname "$feat")"
-  echo "Feature: probe" > "$feat"
+  printf 'Feature: probe\n  Only a description, no scenario.\n' > "$feat"
+  expect_exit 2 "prod write still blocked by a feature file with no scenario" hook gherkin-first.sh "$prod"
+  expect_exit 2 "feature lint fails a feature file with no scenario" hook lint.sh "$feat"
+  printf 'Feature: probe\n  Scenario: no outcome\n    Given a start\n    When it acts\n    And again\n' > "$feat"
+  expect_exit 2 "feature lint fails a scenario with no Then" hook lint.sh "$feat"
+  printf "$scenario" > "$feat"
+  expect_exit 0 "feature lint passes a scenario with a Then" hook lint.sh "$feat"
   expect_exit 0 "prod write allowed once a feature file is untracked" hook gherkin-first.sh "$prod"
   git -C "$repo" add "$feat_rel"
   expect_exit 0 "prod write allowed once a feature file is staged" hook gherkin-first.sh "$prod"
@@ -123,6 +131,24 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   printf '%s FEATURE_WRITE %s\n%s CUCUMBER_RUN FAIL\n%s MAIN_WRITE %s\n%s CUCUMBER_RUN PASS\n' \
     2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$prod_rel" 2999-01-01T00:00:03Z > "$repo/.claude/tdd-events.log"
   expect_exit 0 "pre-commit accepts legacy CUCUMBER_RUN lines" bash -c "cd '$repo' && .githooks/pre-commit"
+
+  printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL module=m reason=compile\n%s MAIN_WRITE %s\n%s BDD_RUN PASS\n' \
+    2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$prod_rel" 2999-01-01T00:00:03Z > "$repo/.claude/tdd-events.log"
+  expect_exit 1 "pre-commit rejects a red run that only failed to compile" bash -c "cd '$repo' && .githooks/pre-commit"
+
+  # A feature already committed, then only a comment and a tag added: not a scenario change.
+  git -C "$repo" reset -q
+  git -C "$repo" add "$feat_rel"
+  git -C "$repo" -c core.hooksPath=/dev/null commit -q -m "feature"
+  printf '# a comment\n@tagged\n' | cat - "$feat" > "$feat.tmp" && mv "$feat.tmp" "$feat"
+  expect_exit 2 "prod write blocked when the feature change is only a comment and a tag" hook gherkin-first.sh "$prod"
+  git -C "$repo" add "$feat_rel" "$prod_rel"
+  printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL\n%s MAIN_WRITE %s\n%s BDD_RUN PASS\n' \
+    2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$prod_rel" 2999-01-01T00:00:03Z > "$repo/.claude/tdd-events.log"
+  expect_exit 1 "pre-commit rejects a staged feature change that changes no scenario" bash -c "cd '$repo' && .githooks/pre-commit"
+  printf '\n  Scenario: another probe\n    Given a start\n    When it acts twice\n    Then it ends\n' >> "$feat"
+  git -C "$repo" add "$feat_rel"
+  expect_exit 0 "pre-commit accepts a staged feature change that adds a scenario" bash -c "cd '$repo' && .githooks/pre-commit"
 
   git -C "$repo" reset -q
   git -C "$repo" add "$feat_rel"
