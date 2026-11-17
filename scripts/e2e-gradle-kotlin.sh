@@ -80,7 +80,7 @@ import org.junit.platform.suite.api.Suite
 @IncludeEngines("cucumber")
 @SelectClasspathResource("features")
 @ConfigurationParameter(key = GLUE_PROPERTY_NAME, value = "demo.bdd")
-@ConfigurationParameter(key = PLUGIN_PROPERTY_NAME, value = "message:build/cucumber/messages.ndjson")
+@ConfigurationParameter(key = PLUGIN_PROPERTY_NAME, value = "message:build/cucumber/RunCucumberTest.ndjson")
 class RunCucumberTest
 EOF
   cat > "$d/src/test/kotlin/demo/bdd/LampSteps.kt" <<'EOF'

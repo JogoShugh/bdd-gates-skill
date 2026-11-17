@@ -61,17 +61,25 @@ tasks.test { useJUnitPlatform() }
 ```
 
 - Features under `src/test/resources/features/`.
-- One `@Suite @IncludeEngines("cucumber")` class per module, named `RunCucumberTest` (any package): the log
-  reads its results by that name.
+- A `@Suite @IncludeEngines("cucumber")` class per suite (a module may have several), or the Cucumber engine
+  run directly with `cucumber.*` settings in `src/test/resources/junit-platform.properties`. The log sums every
+  JUnit result of every Test task that ran.
 - Cucumber 7+ is strict by default. Do not turn strictness off, or a new scenario can never go red.
-- The runner writes Cucumber's message stream, so each run is recorded scenario by scenario (`scenarioResults`):
+- Each suite writes Cucumber's message stream to its own file under `build/cucumber/`, so each run is recorded
+  scenario by scenario (`scenarioResults`). On a suite class:
 
   ```kotlin
-  @ConfigurationParameter(key = PLUGIN_PROPERTY_NAME, value = "message:build/cucumber/messages.ndjson")
+  @ConfigurationParameter(key = PLUGIN_PROPERTY_NAME, value = "summary, message:build/cucumber/RunCucumberTest.ndjson")
   ```
 
-  Add other plugins to the same value, comma-separated (`"pretty, message:build/cucumber/messages.ndjson"`).
-  Without it, the pre-commit finds no scenario results and refuses the commit.
+  or, for the engine run directly, in `junit-platform.properties`:
+
+  ```properties
+  cucumber.plugin=message:build/cucumber/features.ndjson
+  ```
+
+  One file name per suite: two suites writing the same file would overwrite each other. Without a stream, the
+  pre-commit finds no scenario results and refuses the commit.
 
 ### Scenario by scenario
 
