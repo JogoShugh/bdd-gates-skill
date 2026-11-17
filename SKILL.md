@@ -100,6 +100,13 @@ walks the gates end to end.
   actions when the task action throws, which happens on test failure. Use
   `finalizedBy`. Other build tools have the same trap; npm `posttest` does
   not run after a failure either. When in doubt, use the wrapper.
+- **A compile error is not a red run.** In a compiled language a step that names a class not yet written
+  fails to compile, which proves nothing about behaviour. Run the scenario with no new steps first (the
+  undefined steps are the red), then write steps and code together.
+- **A filtered run is not a BDD run.** `test --tests OneClass` that leaves the features out must log nothing,
+  or it logs a false FAIL.
+- **Gate every build, including the next one.** In a repo with several builds, run the lint and check commands
+  through one script that finds them all; a fixed list silently leaves a new build ungated.
 - **The BDD runner must fail undefined steps.** Otherwise the red step is
   "skipped", and the pre-commit check never sees a real red.
 - **Order comes from log line order, not timestamps.** Events in the same
