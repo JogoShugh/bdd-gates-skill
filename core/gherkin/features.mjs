@@ -155,13 +155,21 @@ const worse = (a, b) => (SEVERITY.indexOf(a) <= SEVERITY.indexOf(b) ? a : b);
  * them apart. The uri as it is when nothing matches.
  */
 function resolver(within) {
-  if (!within) return (uri) => uri;
+  const root = `${process.cwd()}/`;
+  const inRepo = (uri) => {
+    // A file: uri (or an absolute path) inside the repository: its repo path, as is.
+    const path = uri.replace(/^file:(\/\/)?/i, '');
+    return path.startsWith(root) ? path.slice(root.length) : null;
+  };
+  if (!within) return (uri) => inRepo(uri) ?? uri;
   const listed = git('ls-files', '--cached', '--others', '--exclude-standard', '--', within) ?? '';
   // Sources before copies a build made (build/resources, dist, target...), when both are there.
   const copy = /(^|\/)(build|out|dist|target|bin|obj|node_modules)\//;
   const files = listed.split('\n').filter((path) => path.endsWith('.feature'))
     .sort((a, b) => Number(copy.test(a)) - Number(copy.test(b)));
   return (uri) => {
+    const local = inRepo(uri);
+    if (local) return local;
     const tail = uriPath(uri);
     return files.find((path) => path === tail || path.endsWith(`/${tail}`)) ?? uri;
   };
