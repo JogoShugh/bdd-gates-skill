@@ -1,6 +1,7 @@
 {
   "default": {
     "strict": true,
+    "format": ["message:.cucumber/messages.ndjson"],
     "paths": ["features/**/*.feature"],
     "import": ["features/step_definitions/**/*.mjs", "features/support/**/*.mjs"]
   }

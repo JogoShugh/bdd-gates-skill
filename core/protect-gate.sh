@@ -16,7 +16,7 @@ input=$(cat)
 tool=$(jq -r '.tool_name // empty' <<<"$input")
 
 # Paths and words that reach the gate. Extended regular expressions.
-protected='bdd-refactor|refactor-mode|tdd-events\.log|\.claude/settings|\.claude/bdd-gates|bdd-gates\.json|\.githooks|hooksPath|(^|/)\.git/|--no-verify'
+protected='bdd-refactor|refactor-mode|tdd-events\.log|\.claude/bdd-runs|\.claude/settings|\.claude/bdd-gates|bdd-gates\.json|\.githooks|hooksPath|(^|/)\.git/|--no-verify'
 
 # The stack's quality settings, by file name, wherever they sit in the repo.
 config=${BDD_GATES_CONFIG:-${BDD_GATES_ROOT:-${CLAUDE_PROJECT_DIR:-.}}/.claude/bdd-gates.json}

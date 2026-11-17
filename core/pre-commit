@@ -119,6 +119,31 @@ if bdd_gherkin_ready; then
     reasons+=("the staged feature files fail the feature lint:")
     while IFS= read -r line; do [ -n "$line" ] && reasons+=("  $line"); done <<<"$lint_out"
   fi
+
+  # Scenario by scenario (scenarioResults: the stack records each run's results): a scenario this change
+  # adds or changes failed in a run before the first production write, and every one of them passes in the
+  # runs after the last production write.
+  if [ "$(bdd_value scenarioResults)" = true ] && [ "$(bdd_scenarios_touched "$changes")" -gt 0 ]; then
+    last_main=$(printf '%s\n' "$recent" | grep -nE -- ' MAIN_WRITE ' | tail -1 | cut -d: -f1)
+    red_files=()
+    green_files=()
+    while IFS=: read -r n rest; do
+      file=$(printf '%s' "$rest" | sed -n 's/.* results=\([^ ]*\).*/\1/p')
+      [ -n "$file" ] || continue
+      if [ -z "$main" ] || [ "$n" -lt "$main" ]; then red_files+=("$file"); fi
+      if [ -z "$last_main" ] || [ "$n" -gt "$last_main" ]; then green_files+=("$file"); fi
+    done < <(printf '%s\n' "$recent" | grep -nE -- "$run_re")
+    staged_paths=()
+    while IFS= read -r f; do staged_paths+=("$f"); done < <(bdd_changed_features staged)
+    verdict=$(cd "$root" && node --no-warnings "$(bdd_gherkin)/features.mjs" verdict --source staged \
+      ${red_files[@]+--red "${red_files[@]}"} ${green_files[@]+--green "${green_files[@]}"} -- "${staged_paths[@]}")
+    if [ "$(jq '.red | length' <<<"$verdict")" -eq 0 ]; then
+      reasons+=("none of the scenarios this change adds or changes was seen failing before the first production write:")
+      while IFS= read -r line; do reasons+=("  $line"); done < <(jq -r '.touched[]' <<<"$verdict")
+    fi
+    while IFS= read -r line; do reasons+=("$line"); done \
+      < <(jq -r '.unproven[] | "not green after the last production write (\(.status)): \(.key)"' <<<"$verdict")
+  fi
 else
   reasons+=("bdd-gates' Gherkin tools are not installed (Node 18+; npm ci --prefix .claude/bdd-gates/gherkin)")
 fi

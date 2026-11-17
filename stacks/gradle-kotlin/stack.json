@@ -33,6 +33,7 @@
     "checkCommand": "scripts/gradle-builds.sh check",
     "bddCommand": "scripts/gradle-builds.sh test",
     "bddLogging": "native",
+    "scenarioResults": true,
     "bddRawCommandRegex": "",
     "protectedFiles": [
       "detekt.yml",

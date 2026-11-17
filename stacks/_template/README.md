@@ -31,6 +31,12 @@ supplies config values and build-side instructions. Copy this folder to
    - `wrapper`: no reliable native hook exists. Use
      `.claude/bdd-gates/bdd-run.sh` as `checkCommand` and set
      `bddRawCommandRegex` so Claude cannot bypass it.
+   - Either way, record the run with `.claude/bdd-gates/record-run.sh
+     PASS|FAIL messages=<ndjson> [within=<build dir>] [k=v...]` (the wrapper
+     does), and have the runner write Cucumber's message stream (its "message"
+     plugin or formatter). Then set `scenarioResults: true` (and, for the
+     wrapper, `bddMessages`): the pre-commit judges the scenarios the commit
+     adds or changes, not just the run.
 
 4. **Which complexity linter, at its own defaults?**
    The command must exit non-zero on a violation. Do not invent thresholds.

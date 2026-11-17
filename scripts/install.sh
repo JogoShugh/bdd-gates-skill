@@ -23,7 +23,7 @@ git -C "$target" rev-parse --git-dir >/dev/null 2>&1 || { echo "$target is not a
 # 1. Core scripts, committed with the repo so every teammate gets the gates.
 dest=$target/.claude/bdd-gates
 mkdir -p "$dest"
-for f in lib.sh gherkin-first.sh protect-gate.sh refactor-prompt.sh log-event.sh lint.sh check.sh bdd-run.sh gate-bash.sh; do
+for f in lib.sh gherkin-first.sh protect-gate.sh refactor-prompt.sh log-event.sh lint.sh check.sh bdd-run.sh record-run.sh gate-bash.sh; do
   cp "$skill_dir/core/$f" "$dest/$f"
   chmod +x "$dest/$f"
 done
@@ -100,6 +100,11 @@ if ! grep -qxF '.claude/tdd-events.log' "$gitignore" 2>/dev/null; then
   fi
   echo '.claude/tdd-events.log' >> "$gitignore"
   echo "added .claude/tdd-events.log to .gitignore"
+fi
+# Each run's results, scenario by scenario, beside the log; local like it.
+if ! grep -qxF '.claude/bdd-runs/' "$gitignore" 2>/dev/null; then
+  echo '.claude/bdd-runs/' >> "$gitignore"
+  echo "added .claude/bdd-runs/ to .gitignore"
 fi
 
 cat <<EOF

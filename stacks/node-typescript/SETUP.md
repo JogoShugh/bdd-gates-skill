@@ -40,6 +40,12 @@ so an undefined step fails the run. Without strict, a new scenario can
 pass with no bindings and never goes red. Do not turn it off. Set `paths` and
 `import` if the features are not in `features/`.
 
+It also writes Cucumber's message stream to `.cucumber/messages.ndjson`
+(`format: ["message:..."]`, the path `bddMessages` names). `bdd-run.sh` hands
+it to `record-run.sh`, so the pre-commit judges the scenarios a commit adds or
+changes: one of them red before the first production write, all of them green
+after the last (`scenarioResults`).
+
 ## 2. BDD run logging (wrapper)
 
 An npm `posttest` script does not run when the tests fail, and the failed run

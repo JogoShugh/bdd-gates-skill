@@ -64,6 +64,25 @@ tasks.test { useJUnitPlatform() }
 - One `@Suite @IncludeEngines("cucumber")` class per module, named `RunCucumberTest` (any package): the log
   reads its results by that name.
 - Cucumber 7+ is strict by default. Do not turn strictness off, or a new scenario can never go red.
+- The runner writes Cucumber's message stream, so each run is recorded scenario by scenario (`scenarioResults`):
+
+  ```kotlin
+  @ConfigurationParameter(key = PLUGIN_PROPERTY_NAME, value = "message:build/cucumber/messages.ndjson")
+  ```
+
+  Add other plugins to the same value, comma-separated (`"pretty, message:build/cucumber/messages.ndjson"`).
+  Without it, the pre-commit finds no scenario results and refuses the commit.
+
+### Scenario by scenario
+
+The pre-commit judges the scenarios the commit adds or changes, not the run as a whole:
+
+- at least one of them failed (or was undefined) in a run before the first production write; a run in which
+  only an older scenario failed does not count;
+- every one of them passed in the runs after the last production write.
+
+`bddgates.bdd-log` hands each run's message stream to `.claude/bdd-gates/record-run.sh`, which keeps one status
+per scenario under `.claude/bdd-runs/` (git-ignored, and protected from Claude) and names it in the log line.
 
 ### The red run in Kotlin
 

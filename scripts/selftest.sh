@@ -106,7 +106,8 @@ for stack_dir in "$skill_dir"/stacks/*/; do
 
   # Clean event log, then walk a correct red-green sequence through the real hooks.
   rm -f "$repo/.claude/tdd-events.log"
-  set_config '.lintCommand = "true" | .checkCommand = "true" | .bddCommand = "exit ${BDD_EXIT:-1}"'
+  # Run by run first; scenario by scenario further down.
+  set_config '.lintCommand = "true" | .checkCommand = "true" | .bddCommand = "exit ${BDD_EXIT:-1}" | .scenarioResults = false | del(.bddMessages)'
   hook log-event.sh "$feat" >/dev/null
   BDD_GATES_ROOT=$repo "$repo/.claude/bdd-gates/bdd-run.sh" >/dev/null 2>&1
   mkdir -p "$(dirname "$prod")"
@@ -151,6 +152,49 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   printf '\n  Scenario: another probe\n    Given a start\n    When it acts twice\n    Then it ends\n' >> "$feat"
   git -C "$repo" add "$feat_rel"
   expect_exit 0 "pre-commit accepts a staged feature change that adds a scenario" bash -c "cd '$repo' && .githooks/pre-commit"
+
+  # Scenario by scenario. record-run reduces Cucumber's message stream to one status per scenario.
+  ndjson=$repo/messages.ndjson
+  {
+    jq -nc --arg u "$feat_rel" '{gherkinDocument: {uri: $u, feature: {children: [{scenario: {id: "s2", name: "another probe", examples: []}}]}}}'
+    jq -nc --arg u "$feat_rel" '{pickle: {id: "p2", uri: $u, name: "another probe", astNodeIds: ["s2"], steps: []}}'
+    echo '{"testCase":{"id":"t2","pickleId":"p2","testSteps":[]}}'
+    echo '{"testCaseStarted":{"id":"c2","testCaseId":"t2","attempt":0}}'
+    echo '{"testStepFinished":{"testCaseStartedId":"c2","testStepId":"x","testStepResult":{"status":"UNDEFINED"}}}'
+    echo '{"testCaseFinished":{"testCaseStartedId":"c2","willBeRetried":false}}'
+  } > "$ndjson"
+  BDD_GATES_ROOT=$repo "$repo/.claude/bdd-gates/record-run.sh" FAIL module=m "messages=$ndjson" >/dev/null 2>&1
+  recorded=$(tail -1 "$repo/.claude/tdd-events.log" | sed -n 's/.* results=\([^ ]*\).*/\1/p')
+  if [ -n "$recorded" ] && [ "$(jq -r --arg k "$feat_rel :: another probe" '.[$k]' "$repo/$recorded")" = UNDEFINED ] \
+    && [ ! -e "$ndjson" ]; then
+    ok "record-run keeps each scenario's status from the message stream, and clears the stream"
+  else
+    bad "record-run did not record the scenario (line: $(tail -1 "$repo/.claude/tdd-events.log"))"
+  fi
+  expect_exit 2 "Claude may not write the run results" tool_hook protect-gate.sh Write file_path "$repo/.claude/bdd-runs/forged.json"
+
+  set_config '.scenarioResults = true'
+  runs=$repo/.claude/bdd-runs
+  result() { jq -n --arg k "$feat_rel :: $2" --arg s "$3" '{($k): $s}' > "$runs/$1.json"; }
+  result new-red "another probe" UNDEFINED
+  result old-red "a probe" FAILED
+  result new-green "another probe" PASSED
+  result new-failing "another probe" FAILED
+  result old-green "a probe" PASSED
+  sequence() { # <red results> <green results>
+    printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL results=.claude/bdd-runs/%s.json\n%s MAIN_WRITE %s\n%s BDD_RUN PASS results=.claude/bdd-runs/%s.json\n' \
+      2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z "$1" 2999-01-01T00:00:02Z "$prod_rel" 2999-01-01T00:00:03Z "$2" \
+      > "$repo/.claude/tdd-events.log"
+  }
+  sequence new-red new-green
+  expect_exit 0 "pre-commit accepts the new scenario red before the code and green after" bash -c "cd '$repo' && .githooks/pre-commit"
+  sequence old-red new-green
+  expect_exit 1 "pre-commit rejects a red run in which only an unchanged scenario failed" bash -c "cd '$repo' && .githooks/pre-commit"
+  sequence new-red new-failing
+  expect_exit 1 "pre-commit rejects a new scenario still failing after the code" bash -c "cd '$repo' && .githooks/pre-commit"
+  sequence new-red old-green
+  expect_exit 1 "pre-commit rejects a new scenario that never ran after the code" bash -c "cd '$repo' && .githooks/pre-commit"
+  set_config '.scenarioResults = false'
 
   git -C "$repo" reset -q
   git -C "$repo" add "$feat_rel"

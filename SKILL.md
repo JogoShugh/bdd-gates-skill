@@ -21,6 +21,7 @@ replaces the hooks**: if a gate blocks you, satisfy it; never edit it away.
 | Logged BDD runs | stack-native hook, or `bdd-run.sh` wrapper + `gate-bash.sh` | Raw test command that would leave no `BDD_RUN` fact (wrapper stacks only) |
 | Green to stop | `Stop` → `check.sh` | Ending the turn while tests, BDD, lint, or architecture checks fail |
 | Ordering | `.githooks/pre-commit` | Commit of production code without a staged scenario change, a feature write and a BDD run that failed on behaviour (not `reason=compile`) before the first prod write, and a green final run |
+| Scenario by scenario | `record-run.sh` + `pre-commit` (`scenarioResults`) | Commit where none of the scenarios it adds or changes failed before the first prod write (an older scenario failing does not count), or one of them is not green after the last |
 | Refactor mode | prompt `refactor-mode on "why"` → `refactor-prompt.sh`, switched on by the user only; `pre-commit`, `commit-msg`, `post-commit` | One commit of production code with no feature change, unless tests and features are unchanged and the suite is green before and after |
 | Gate protection | `PreToolUse` every tool → `protect-gate.sh` | Switching refactor mode on; editing gate scripts, config, git hooks, settings, or the event log; `--no-verify`; any other tool call naming the gate or the mode |
 
