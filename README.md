@@ -65,7 +65,7 @@ flowchart TD
   end
   R --> M
 
-  J --> W["CLAUDE · edits src/main/kotlin"]:::claude
+  J -->|"then, by the skill's rule"| W["CLAUDE · edits src/main/kotlin"]:::claude
   W --> P(["CLAUDE HOOK · PreToolUse, Edit/Write<br/>gherkin-first.sh: do the .feature files<br/>add or change a scenario vs HEAD?"]):::hook
   P -- "no" --> X2["write blocked"]:::block
   P -- "yes" --> LK(["CLAUDE HOOK · PostToolUse<br/>log-event.sh: MAIN_WRITE<br/>lint.sh: detekt"]):::hook
@@ -126,7 +126,8 @@ sequenceDiagram
 
 The pre-commit reads the event log since the last commit as a little state
 machine. A commit of production code is accepted only from `Green`, and only
-if the staged feature files add or change a scenario.
+if the staged feature files add or change a scenario and pass the feature lint.
+A commit with no production code in it is not checked.
 
 ```mermaid
 stateDiagram-v2
@@ -134,7 +135,7 @@ stateDiagram-v2
   [*] --> Clean
   Clean --> FeatureChanged: FEATURE_WRITE
   FeatureChanged --> Red: BDD_RUN FAIL<br/>on behaviour, touched scenario failed
-  FeatureChanged --> FeatureChanged: BDD_RUN FAIL reason=compile<br/>(does not count)
+  FeatureChanged --> FeatureChanged: BDD_RUN FAIL reason=compile<br/>or reason=no-results (does not count)
   Red --> Coding: MAIN_WRITE
   Coding --> Coding: MAIN_WRITE, BDD_RUN FAIL
   Coding --> Green: BDD_RUN PASS<br/>touched scenarios PASSED
@@ -224,8 +225,15 @@ flowchart LR
   subgraph SK["bdd-gates skill"]
     core["core/*.sh"]:::src
     gh["core/gherkin/"]:::src
+    hj["core/hooks.json"]:::src
+    gh2["core/pre-commit, commit-msg,<br/>post-commit, refactor-mode"]:::src
     st["stacks/&lt;stack&gt;/stack.json"]:::src
+    tp["stacks/&lt;stack&gt;/templates"]:::src
   end
+
+  YOU(["you, by hand:<br/>stacks/&lt;stack&gt;/SETUP.md<br/>git config core.hooksPath .githooks"])
+  tp --> YOU
+  YOU --> bl["target repo, committed:<br/>build-logic/, scripts/gradle-builds.sh,<br/>ArchitectureBoundaryTest.kt"]:::src
 
   I(["scripts/install.sh &lt;stack&gt; &lt;repo&gt;"])
 
@@ -246,7 +254,9 @@ flowchart LR
 
   core --> I
   gh --> I
-  st --> I
+  hj --> I
+  gh2 --> I
+  st -- "only if no config yet" --> I
   I --> s1 & s2 & s3 & s4 & s5 & s6
   I --> n1
   I -. "adds to .gitignore" .-> n2 & n3
