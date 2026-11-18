@@ -79,6 +79,67 @@ Not drawn: `gate-bash.sh` (before a shell command, blocks a raw test command
 that would skip the log) and `refactor-prompt.sh` (on each prompt, lets the
 author switch refactor mode with `refactor-mode on "why"`, `off` or `status`).
 
+### One red-green cycle, in order
+
+The same cycle as a conversation between the parts. Claude only ever talks to
+its tools; the hooks, the build and git do the checking.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as Claude
+  participant H as Claude Code hooks
+  participant B as Build (Gradle + bdd-log)
+  participant L as Event log + bdd-runs
+  participant G as git pre-commit
+
+  C->>H: Edit checkout.feature
+  H->>H: PreToolUse protect-gate.sh: not a gate file
+  H->>L: PostToolUse log-event.sh: FEATURE_WRITE
+  H-->>C: PostToolUse lint.sh: gplint findings, if any
+  C->>B: scripts/gradle-builds.sh test
+  B->>L: BDD_RUN FAIL + one status per scenario
+  C->>H: Edit Checkout.kt
+  H->>L: PreToolUse gherkin-first.sh reads the log
+  L-->>H: scenario changed, red run on behaviour
+  H-->>C: allowed
+  H->>L: PostToolUse log-event.sh: MAIN_WRITE
+  C->>B: scripts/gradle-builds.sh test
+  B->>L: BDD_RUN PASS, same scenarios PASSED
+  C->>H: tries to stop
+  H->>B: Stop check.sh: gradle-builds.sh check
+  B-->>H: detekt, Kover, CPD, architecture test pass
+  H-->>C: may stop
+  C->>G: git commit
+  G->>L: reads the order and the results
+  L-->>G: feature, red, main, green
+  G-->>C: commit accepted
+```
+
+### What the commit check expects of the log
+
+The pre-commit reads the event log since the last commit as a little state
+machine. A commit of production code is accepted only from `Green`.
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> Clean
+  Clean --> FeatureChanged: FEATURE_WRITE<br/>(a real scenario change)
+  FeatureChanged --> Red: BDD_RUN FAIL<br/>on behaviour, touched scenario failed
+  FeatureChanged --> FeatureChanged: BDD_RUN FAIL reason=compile<br/>(does not count)
+  Red --> Coding: MAIN_WRITE
+  Coding --> Coding: MAIN_WRITE, BDD_RUN FAIL
+  Coding --> Green: BDD_RUN PASS<br/>touched scenarios PASSED
+  Green --> Coding: another MAIN_WRITE
+  Green --> [*]: git commit accepted
+
+  Clean --> Refactor: author runs refactor-mode on
+  Refactor --> RefactorGreen: BDD_RUN PASS before the first MAIN_WRITE
+  RefactorGreen --> RefactorGreen: MAIN_WRITE, BDD_RUN
+  RefactorGreen --> [*]: commit, last run PASS,<br/>no feature or test changed,<br/>then the mode switches off
+```
+
 ## What it enforces
 
 | Gate | When it runs | What it does |
@@ -145,6 +206,44 @@ Or ask Claude: "set up bdd-gates in this repo". The skill runs the same steps
 and shows you the build changes before it makes them.
 
 ### What the installer changes in the target repo
+
+```mermaid
+flowchart LR
+  classDef src fill:#eef0f4,stroke:#8a8f9c,color:#1f2430
+  classDef claude fill:#fff4dd,stroke:#c98a12,color:#3a2a05
+  classDef git fill:#f1ecfb,stroke:#7a55c7,color:#22153f
+  classDef local fill:#fde8e8,stroke:#c94040,color:#3d0e0e
+
+  subgraph SK["bdd-gates skill"]
+    core["core/*.sh"]:::src
+    gh["core/gherkin/"]:::src
+    st["stacks/&lt;stack&gt;/stack.json"]:::src
+  end
+
+  I(["scripts/install.sh &lt;stack&gt; &lt;repo&gt;"])
+
+  subgraph RP["target repo, committed"]
+    s1[".claude/bdd-gates/*.sh"]:::claude
+    s2[".claude/bdd-gates/gherkin/"]:::claude
+    s3[".claude/bdd-gates.json"]:::claude
+    s4[".claude/settings.json hooks"]:::claude
+    s5[".githooks/pre-commit, commit-msg,<br/>post-commit"]:::git
+    s6["scripts/refactor-mode"]:::git
+  end
+
+  subgraph LO["target repo, gitignored"]
+    n1["gherkin/node_modules (npm ci)"]:::local
+    n2[".claude/tdd-events.log"]:::local
+    n3[".claude/bdd-runs/"]:::local
+  end
+
+  core --> I
+  gh --> I
+  st --> I
+  I --> s1 & s2 & s3 & s4 & s5 & s6
+  I --> n1
+  I -. "adds to .gitignore" .-> n2 & n3
+```
 
 | Path | Change |
 |---|---|
