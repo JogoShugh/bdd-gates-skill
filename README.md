@@ -21,16 +21,24 @@ Three kinds of process do the checking, and none of them is Claude:
   change a scenario against HEAD. It reads the Gherkin, not the log: whether
   the scenario was seen red is the commit hook's question. After an edit,
   `log-event.sh` writes the fact to the event log and `lint.sh` lints what
-  changed: gplint for a `.feature`, the stack's linter (detekt) for code.
-  When Claude tries to stop, `check.sh` runs the full check and sends it back
-  to work if anything fails.
+  changed: gplint for a `.feature`, the stack's linter (detekt) for code. The
+  edit has already happened by then, so a lint failure is reported back to
+  Claude to fix, and enforced for real at commit. When Claude tries to stop,
+  `check.sh` runs the full check and sends it back to work if anything fails.
+  The full check runs the tests too, so Claude cannot end a turn while a
+  scenario is red, and each Stop logs one more run.
 - **The build** records each test run. On the gradle-kotlin stack that is the
   `bddgates.bdd-log` plugin: every Test task writes Cucumber's message stream,
   and `record-run.sh` turns it into one status per scenario and a `BDD_RUN`
-  line in the event log, pass or fail.
-- **The git pre-commit hook** reads that log and those results at commit
-  time, from any tool or terminal, and refuses a commit whose scenarios did not
-  go red before the production code and green after it.
+  line in the event log, pass or fail. An up-to-date Test task ran nothing and
+  is not recorded, nor is a `--tests` run that left the features out.
+- **The git pre-commit hook** runs on every commit, from any tool or terminal,
+  reads that log and those results, and refuses a commit whose scenarios did
+  not go red before the production code and green after it. Only Claude's
+  Edit, Write and MultiEdit are logged as writes: a person editing in a
+  terminal leaves no `FEATURE_WRITE` or `MAIN_WRITE`, so such a commit is
+  refused for want of a feature write, or, when only the code was edited by
+  hand, its ordering cannot be seen.
 
 So a change goes like this. Claude writes or changes a scenario; the lint
 checks it. Now the hook lets Claude touch production code, but the skill tells
@@ -53,10 +61,10 @@ flowchart TD
   classDef block fill:#fde8e8,stroke:#c94040,color:#3d0e0e
 
   A["CLAUDE · edits a .feature<br/>Edit / Write"]:::claude
-  A --> PT(["CLAUDE HOOK · PreToolUse, every tool<br/>protect-gate.sh: gate files, build-logic,<br/>gradle-builds.sh, detekt.yml, arch test"]):::hook
+  A --> PT(["CLAUDE HOOK · PreToolUse, every tool<br/>protect-gate.sh: gate scripts, config, settings,<br/>git hooks, event log, --no-verify, and protectedFiles<br/>(detekt.yml, baseline, build-logic, gradle-builds.sh, arch test)"]):::hook
   PT -- "touched" --> X0["blocked: author's files"]:::block
-  PT -- "clear" --> L(["CLAUDE HOOK · PostToolUse<br/>log-event.sh + lint.sh<br/>gplint: scenario-has-then, no-same-shape"]):::hook
-  L -- "fails" --> X1["fix the Gherkin (table, add a Then)"]:::block
+  PT -- "clear" --> L(["CLAUDE HOOK · PostToolUse, Edit/Write/MultiEdit<br/>log-event.sh: FEATURE_WRITE<br/>lint.sh: gplint, 15 rules, e.g. scenario-has-then,<br/>no-same-shape-scenarios"]):::hook
+  L -- "fails" --> X1["reported to Claude to fix<br/>(the edit stands; enforced at commit)"]:::hook
   L -- "passes" --> R["CLAUDE · runs red build<br/>scripts/gradle-builds.sh test"]:::claude
 
   subgraph GR["GRADLE · bdd-log"]
@@ -66,22 +74,24 @@ flowchart TD
   R --> M
 
   J -->|"then, by the skill's rule"| W["CLAUDE · edits src/main/kotlin"]:::claude
-  W --> P(["CLAUDE HOOK · PreToolUse, Edit/Write<br/>gherkin-first.sh: do the .feature files<br/>add or change a scenario vs HEAD?"]):::hook
+  W --> P(["CLAUDE HOOK · PreToolUse, Edit/Write/MultiEdit<br/>gherkin-first.sh: do the .feature files<br/>add or change a scenario vs HEAD?<br/>(always yes in refactor mode)"]):::hook
   P -- "no" --> X2["write blocked"]:::block
-  P -- "yes" --> LK(["CLAUDE HOOK · PostToolUse<br/>log-event.sh: MAIN_WRITE<br/>lint.sh: detekt"]):::hook
+  P -- "yes" --> LK(["CLAUDE HOOK · PostToolUse<br/>log-event.sh: MAIN_WRITE<br/>lint.sh: detekt, reported to Claude"]):::hook
   LK --> G["CLAUDE · runs green build<br/>same scenarios must PASS"]:::claude
   G --> M
   J -.->|"read at commit"| C
 
-  G --> S(["CLAUDE HOOK · Stop<br/>check.sh runs GRADLE check: detekt,<br/>Kover 80%, CPD, architecture test"]):::hook
-  S -- "fails" --> X4["Claude can't stop until fixed"]:::block
+  G --> S(["CLAUDE HOOK · Stop, every time Claude stops<br/>check.sh runs GRADLE check: the tests (logged),<br/>detekt, Kover 80%, CPD, architecture test"]):::hook
+  S -- "fails, e.g. a scenario still red" --> X4["Claude can't stop until fixed"]:::block
+  S -.->|"logs a run"| M
   S -- "passes" --> C(["GIT HOOK · .githooks/pre-commit<br/>staged scenario change, lint passes,<br/>red run before the first MAIN_WRITE,<br/>touched scenarios green after the last"]):::git
   C -- "fails" --> X5["commit refused"]:::block
   C -- "passes" --> D(["committed ✓"]):::git
 ```
 
 Not drawn: `gate-bash.sh` (before a shell command, blocks a raw test command
-that would skip the log) and `refactor-prompt.sh` (on each prompt, lets the
+that would skip the log; idle on gradle-kotlin, where the build logs every
+run itself) and `refactor-prompt.sh` (on each prompt, lets the
 author switch refactor mode with `refactor-mode on "why"`, `off` or `status`).
 
 ### One red-green cycle, in order
@@ -113,7 +123,8 @@ sequenceDiagram
   B->>L: BDD_RUN PASS, same scenarios PASSED
   C->>H: tries to stop
   H->>B: Stop check.sh: gradle-builds.sh check
-  B-->>H: detekt, Kover, CPD, architecture test pass
+  B->>L: BDD_RUN PASS (check runs the tests too)
+  B-->>H: tests, detekt, Kover, CPD, architecture test pass
   H-->>C: may stop
   C->>G: git commit
   G->>G: staged features: a scenario changed, gplint passes
@@ -127,7 +138,14 @@ sequenceDiagram
 The pre-commit reads the event log since the last commit as a little state
 machine. A commit of production code is accepted only from `Green`, and only
 if the staged feature files add or change a scenario and pass the feature lint.
-A commit with no production code in it is not checked.
+A commit with no production code in it is not checked. The diagram is the
+intended order; the hook checks less strictly than it reads. The feature write
+and the red run each have to come before the first `MAIN_WRITE`, but not one
+after the other, and the red line and the failing touched scenario may come
+from different runs. "Green" means the last `BDD_RUN` line passed, and with
+several modules that line is one module's. If HEAD moves while refactor mode
+is on, every production commit is refused until the author switches it off;
+any commit switches it off.
 
 ```mermaid
 stateDiagram-v2
@@ -139,7 +157,7 @@ stateDiagram-v2
   Red --> Coding: MAIN_WRITE
   Coding --> Coding: MAIN_WRITE, BDD_RUN FAIL
   Coding --> Green: BDD_RUN PASS<br/>touched scenarios PASSED
-  Green --> Coding: another MAIN_WRITE
+  Green --> Coding: another MAIN_WRITE,<br/>or a BDD_RUN FAIL
   Green --> [*]: git commit accepted
 
   Clean --> Refactor: author runs refactor-mode on
@@ -231,9 +249,9 @@ flowchart LR
     tp["stacks/&lt;stack&gt;/templates"]:::src
   end
 
-  YOU(["you, by hand:<br/>stacks/&lt;stack&gt;/SETUP.md<br/>git config core.hooksPath .githooks"])
+  YOU(["you, by hand:<br/>stacks/&lt;stack&gt;/SETUP.md,<br/>git config core.hooksPath .githooks,<br/>then scripts/verify-install.sh"])
   tp --> YOU
-  YOU --> bl["target repo, committed:<br/>build-logic/, scripts/gradle-builds.sh,<br/>ArchitectureBoundaryTest.kt"]:::src
+  YOU --> bl["target repo, committed:<br/>build-logic/, scripts/gradle-builds.sh,<br/>ArchitectureBoundaryTest.kt, and per build:<br/>includeBuild, the two plugin ids,<br/>Cucumber message plugin, Konsist"]:::src
 
   I(["scripts/install.sh &lt;stack&gt; &lt;repo&gt;"])
 
