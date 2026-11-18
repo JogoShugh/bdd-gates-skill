@@ -17,9 +17,11 @@ Three kinds of process do the checking, and none of them is Claude:
 
 - **Claude Code hooks** run around Claude's own tool calls. Before any tool
   call, `protect-gate.sh` keeps Claude out of the gate itself. Before an edit,
-  `gherkin-first.sh` refuses production code until a scenario has really
-  changed and a run has failed on it. After an edit, `log-event.sh` writes the
-  fact to the event log and `lint.sh` lints what changed, Gherkin included.
+  `gherkin-first.sh` refuses production code until the feature files add or
+  change a scenario against HEAD. It reads the Gherkin, not the log: whether
+  the scenario was seen red is the commit hook's question. After an edit,
+  `log-event.sh` writes the fact to the event log and `lint.sh` lints what
+  changed: gplint for a `.feature`, the stack's linter (detekt) for code.
   When Claude tries to stop, `check.sh` runs the full check and sends it back
   to work if anything fails.
 - **The build** records each test run. On the gradle-kotlin stack that is the
@@ -31,11 +33,13 @@ Three kinds of process do the checking, and none of them is Claude:
   go red before the production code and green after it.
 
 So a change goes like this. Claude writes or changes a scenario; the lint
-checks it. Claude runs the tests, they fail on the new behaviour, and the build
-logs that. Only then may Claude write production code. Claude runs the tests
-again until the same scenarios pass, the Stop hook runs the full check
-(complexity, coverage, duplication, architecture), and the commit hook checks
-the whole order once more before anything lands.
+checks it. Now the hook lets Claude touch production code, but the skill tells
+Claude to run the tests first, see them fail on the new behaviour, and the
+build logs that. Claude writes the code, runs the tests again until the same
+scenarios pass, and the Stop hook runs the full check (complexity, coverage,
+duplication, architecture). At commit, the git hook checks the order in the
+log: a scenario change, a red run before the first production write, and
+green after the last. Skip the red run and the commit is refused.
 
 Shown for the gradle-kotlin stack. Blue is Claude acting, amber a Claude Code
 hook, green Gradle, purple the git hook, red a block.
@@ -61,16 +65,17 @@ flowchart TD
   end
   R --> M
 
-  W["CLAUDE · edits src/main/kotlin"]:::claude
-  J -.->|"read by"| P
-  W --> P(["CLAUDE HOOK · PreToolUse, Edit/Write<br/>gherkin-first.sh: real scenario changed?<br/>red run logged on behaviour?"]):::hook
+  J --> W["CLAUDE · edits src/main/kotlin"]:::claude
+  W --> P(["CLAUDE HOOK · PreToolUse, Edit/Write<br/>gherkin-first.sh: do the .feature files<br/>add or change a scenario vs HEAD?"]):::hook
   P -- "no" --> X2["write blocked"]:::block
-  P -- "yes" --> G["CLAUDE · runs green build<br/>same scenarios must PASS"]:::claude
+  P -- "yes" --> LK(["CLAUDE HOOK · PostToolUse<br/>log-event.sh: MAIN_WRITE<br/>lint.sh: detekt"]):::hook
+  LK --> G["CLAUDE · runs green build<br/>same scenarios must PASS"]:::claude
   G --> M
+  J -.->|"read at commit"| C
 
   G --> S(["CLAUDE HOOK · Stop<br/>check.sh runs GRADLE check: detekt,<br/>Kover 80%, CPD, architecture test"]):::hook
   S -- "fails" --> X4["Claude can't stop until fixed"]:::block
-  S -- "passes" --> C(["GIT HOOK · .githooks/pre-commit<br/>scenario changed, lint passes,<br/>touched scenarios red then green"]):::git
+  S -- "passes" --> C(["GIT HOOK · .githooks/pre-commit<br/>staged scenario change, lint passes,<br/>red run before the first MAIN_WRITE,<br/>touched scenarios green after the last"]):::git
   C -- "fails" --> X5["commit refused"]:::block
   C -- "passes" --> D(["committed ✓"]):::git
 ```
@@ -100,10 +105,10 @@ sequenceDiagram
   C->>B: scripts/gradle-builds.sh test
   B->>L: BDD_RUN FAIL + one status per scenario
   C->>H: Edit Checkout.kt
-  H->>L: PreToolUse gherkin-first.sh reads the log
-  L-->>H: scenario changed, red run on behaviour
+  H->>H: PreToolUse gherkin-first.sh: a scenario changed vs HEAD
   H-->>C: allowed
   H->>L: PostToolUse log-event.sh: MAIN_WRITE
+  H-->>C: PostToolUse lint.sh: detekt findings, if any
   C->>B: scripts/gradle-builds.sh test
   B->>L: BDD_RUN PASS, same scenarios PASSED
   C->>H: tries to stop
@@ -111,21 +116,23 @@ sequenceDiagram
   B-->>H: detekt, Kover, CPD, architecture test pass
   H-->>C: may stop
   C->>G: git commit
+  G->>G: staged features: a scenario changed, gplint passes
   G->>L: reads the order and the results
-  L-->>G: feature, red, main, green
+  L-->>G: feature, red before main, green after
   G-->>C: commit accepted
 ```
 
 ### What the commit check expects of the log
 
 The pre-commit reads the event log since the last commit as a little state
-machine. A commit of production code is accepted only from `Green`.
+machine. A commit of production code is accepted only from `Green`, and only
+if the staged feature files add or change a scenario.
 
 ```mermaid
 stateDiagram-v2
   direction LR
   [*] --> Clean
-  Clean --> FeatureChanged: FEATURE_WRITE<br/>(a real scenario change)
+  Clean --> FeatureChanged: FEATURE_WRITE
   FeatureChanged --> Red: BDD_RUN FAIL<br/>on behaviour, touched scenario failed
   FeatureChanged --> FeatureChanged: BDD_RUN FAIL reason=compile<br/>(does not count)
   Red --> Coding: MAIN_WRITE
@@ -137,7 +144,7 @@ stateDiagram-v2
   Clean --> Refactor: author runs refactor-mode on
   Refactor --> RefactorGreen: BDD_RUN PASS before the first MAIN_WRITE
   RefactorGreen --> RefactorGreen: MAIN_WRITE, BDD_RUN
-  RefactorGreen --> [*]: commit, last run PASS,<br/>no feature or test changed,<br/>then the mode switches off
+  RefactorGreen --> [*]: commit, last run PASS after the last MAIN_WRITE,<br/>no feature or test changed,<br/>then the mode switches off
 ```
 
 ## What it enforces
