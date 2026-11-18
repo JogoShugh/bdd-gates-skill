@@ -158,6 +158,30 @@ case "$last_run" in
   *) reasons+=("the latest BDD run since the last commit is not PASS") ;;
 esac
 
+# Green after the last production write, in every module: a build of several modules logs one BDD_RUN line per
+# module, so the last line alone is one module's. After the last MAIN_WRITE there must be a run, and each
+# module's latest run must be PASS.
+last_main_line=$(printf '%s\n' "$recent" | grep -nE -- ' MAIN_WRITE ' | tail -1 | cut -d: -f1)
+if [ -n "$last_main_line" ]; then
+  after=$(printf '%s\n' "$recent" | tail -n +"$((last_main_line + 1))" | grep -E -- "$run_re")
+  if [ -z "$after" ]; then
+    reasons+=("production code was written after the last BDD run (no run since the last MAIN_WRITE)")
+  else
+    while IFS= read -r line; do reasons+=("$line"); done < <(printf '%s\n' "$after" | awk '
+      { m = "-"; for (i = 3; i <= NF; i++) if ($i ~ /^module=/) m = substr($i, 8); s = ($0 ~ / PASS/) ? "PASS" : "FAIL"; latest[m] = s }
+      END { for (m in latest) if (latest[m] != "PASS") printf "module %s: its latest BDD run after the last production write is not PASS\n", m }')
+  fi
+fi
+
+# Every staged production file was written through Claude's tools, so its place in the order is known. A file
+# edited outside them (a terminal, an IDE) has no MAIN_WRITE, and the check could not see when it changed.
+# A pure rename carries no new code and is left out.
+for f in "${staged_prod[@]}"; do
+  git diff --cached --name-only --diff-filter=AM -- "$f" | grep -q . || continue
+  printf '%s\n' "$recent" | awk -v f="$f" '$2 == "MAIN_WRITE" && $3 == f { found = 1 } END { exit !found }' \
+    || reasons+=("$f is staged but has no MAIN_WRITE since the last commit: it was written outside Claude's tools, so its order cannot be checked")
+done
+
 if [ ${#reasons[@]} -gt 0 ]; then
   echo "pre-commit: TDD ordering check FAILED:" >&2
   printf '  - %s\n' "${reasons[@]}" >&2

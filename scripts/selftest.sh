@@ -153,6 +153,25 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   git -C "$repo" add "$feat_rel"
   expect_exit 0 "pre-commit accepts a staged feature change that adds a scenario" bash -c "cd '$repo' && .githooks/pre-commit"
 
+  # Several modules: the last line passing is not enough when another module's latest run failed.
+  printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL module=a\n%s MAIN_WRITE %s\n%s BDD_RUN FAIL module=a\n%s BDD_RUN PASS module=b\n' \
+    2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$prod_rel" \
+    2999-01-01T00:00:03Z 2999-01-01T00:00:04Z > "$repo/.claude/tdd-events.log"
+  expect_exit 1 "pre-commit rejects a module still red when the last line is another module's PASS" bash -c "cd '$repo' && .githooks/pre-commit"
+  printf '%s BDD_RUN PASS module=a\n%s BDD_RUN PASS module=b\n' 2999-01-01T00:00:05Z 2999-01-01T00:00:06Z >> "$repo/.claude/tdd-events.log"
+  expect_exit 0 "pre-commit accepts once every module's latest run passes" bash -c "cd '$repo' && .githooks/pre-commit"
+
+  # Production code written after the last run: not seen green.
+  printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL\n%s MAIN_WRITE %s\n%s BDD_RUN PASS\n%s MAIN_WRITE %s\n' \
+    2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$prod_rel" \
+    2999-01-01T00:00:03Z 2999-01-01T00:00:04Z "$prod_rel" > "$repo/.claude/tdd-events.log"
+  expect_exit 1 "pre-commit rejects production code written after the last run" bash -c "cd '$repo' && .githooks/pre-commit"
+
+  # A staged production file with no MAIN_WRITE: edited outside Claude's tools, its order unknown.
+  printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL\n%s BDD_RUN PASS\n' \
+    2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z > "$repo/.claude/tdd-events.log"
+  expect_exit 1 "pre-commit rejects production code written outside Claude's tools" bash -c "cd '$repo' && .githooks/pre-commit"
+
   # Scenario by scenario. record-run reduces Cucumber's message stream to one status per scenario.
   ndjson=$repo/messages.ndjson
   {

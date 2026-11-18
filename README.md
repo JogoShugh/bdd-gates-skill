@@ -35,10 +35,10 @@ Three kinds of process do the checking, and none of them is Claude:
 - **The git pre-commit hook** runs on every commit, from any tool or terminal,
   reads that log and those results, and refuses a commit whose scenarios did
   not go red before the production code and green after it. Only Claude's
-  Edit, Write and MultiEdit are logged as writes: a person editing in a
-  terminal leaves no `FEATURE_WRITE` or `MAIN_WRITE`, so such a commit is
-  refused for want of a feature write, or, when only the code was edited by
-  hand, its ordering cannot be seen.
+  Edit, Write and MultiEdit are logged as writes, so a staged production file
+  with no `MAIN_WRITE` was edited outside them (a terminal, an IDE) and the
+  commit is refused: its order cannot be seen. Refactor mode is the way to
+  commit such a change.
 
 So a change goes like this. Claude writes or changes a scenario; the lint
 checks it. Now the hook lets Claude touch production code, but the skill tells
@@ -142,8 +142,8 @@ A commit with no production code in it is not checked. The diagram is the
 intended order; the hook checks less strictly than it reads. The feature write
 and the red run each have to come before the first `MAIN_WRITE`, but not one
 after the other, and the red line and the failing touched scenario may come
-from different runs. "Green" means the last `BDD_RUN` line passed, and with
-several modules that line is one module's. If HEAD moves while refactor mode
+from different runs. "Green" means a run after the last `MAIN_WRITE`, and in
+it every module's latest run passed. If HEAD moves while refactor mode
 is on, every production commit is refused until the author switches it off;
 any commit switches it off.
 
@@ -177,7 +177,7 @@ stateDiagram-v2
 | Logged test runs | Every BDD run | Appends `BDD_RUN PASS` or `BDD_RUN FAIL`, including runs that fail, with each scenario's own result |
 | Raw test command | Before Claude runs a shell command | On wrapper-logged stacks, blocks a raw test command that would skip the log |
 | Green to stop | When Claude tries to end its turn | Runs the full check; Claude keeps working until it passes |
-| TDD ordering | `git commit`, from any tool or terminal | Rejects a commit of production code unless it adds or changes a scenario, and the log shows a feature write, then a BDD run that failed on behaviour (a compile failure does not count), before the first production write, and a passing final run |
+| TDD ordering | `git commit`, from any tool or terminal | Rejects a commit of production code unless it adds or changes a scenario, and the log shows a feature write, then a BDD run that failed on behaviour (a compile failure does not count), before the first production write, and a run after the last production write in which every module's latest run passed. Every staged production file must have been written through Claude's tools (a `MAIN_WRITE`), or its order cannot be seen |
 | Scenario by scenario | `git commit`, on stacks that record each scenario | Also rejects it unless one of the scenarios it adds or changes failed before the first production write (an older scenario failing does not count), and all of them pass after the last |
 | Refactor mode | `git commit`, after the author switches it on | Lets one commit change production code with no feature change, if no test or feature file changed, the suite passed before the first production write, and the last run passed after the last one |
 | Gate protection | Before every Claude tool call | Blocks Claude from switching refactor mode on, changing the gate's scripts, config, git hooks, settings, event log or run results, and skipping hooks |
