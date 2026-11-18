@@ -11,6 +11,74 @@ exits 2 cannot be reasoned past.
 This folder is a Claude Code skill. Claude reads `SKILL.md` to install the
 gates and to work inside them. This README is for the people who own the repo.
 
+## How it works
+
+Three kinds of process do the checking, and none of them is Claude:
+
+- **Claude Code hooks** run around Claude's own tool calls. Before any tool
+  call, `protect-gate.sh` keeps Claude out of the gate itself. Before an edit,
+  `gherkin-first.sh` refuses production code until a scenario has really
+  changed and a run has failed on it. After an edit, `log-event.sh` writes the
+  fact to the event log and `lint.sh` lints what changed, Gherkin included.
+  When Claude tries to stop, `check.sh` runs the full check and sends it back
+  to work if anything fails.
+- **The build** records each test run. On the gradle-kotlin stack that is the
+  `bddgates.bdd-log` plugin: every Test task writes Cucumber's message stream,
+  and `record-run.sh` turns it into one status per scenario and a `BDD_RUN`
+  line in the event log, pass or fail.
+- **The git pre-commit hook** reads that log and those results at commit
+  time, from any tool or terminal, and refuses a commit whose scenarios did not
+  go red before the production code and green after it.
+
+So a change goes like this. Claude writes or changes a scenario; the lint
+checks it. Claude runs the tests, they fail on the new behaviour, and the build
+logs that. Only then may Claude write production code. Claude runs the tests
+again until the same scenarios pass, the Stop hook runs the full check
+(complexity, coverage, duplication, architecture), and the commit hook checks
+the whole order once more before anything lands.
+
+Shown for the gradle-kotlin stack. Blue is Claude acting, amber a Claude Code
+hook, green Gradle, purple the git hook, red a block.
+
+```mermaid
+flowchart TD
+  classDef claude fill:#e8f0ff,stroke:#3b6fd8,color:#14233f
+  classDef hook fill:#fff4dd,stroke:#c98a12,color:#3a2a05
+  classDef gradle fill:#e9f7ee,stroke:#2f9a5a,color:#0f2e1b
+  classDef git fill:#f1ecfb,stroke:#7a55c7,color:#22153f
+  classDef block fill:#fde8e8,stroke:#c94040,color:#3d0e0e
+
+  A["CLAUDE · edits a .feature<br/>Edit / Write"]:::claude
+  A --> PT(["CLAUDE HOOK · PreToolUse, every tool<br/>protect-gate.sh: gate files, build-logic,<br/>gradle-builds.sh, detekt.yml, arch test"]):::hook
+  PT -- "touched" --> X0["blocked: author's files"]:::block
+  PT -- "clear" --> L(["CLAUDE HOOK · PostToolUse<br/>log-event.sh + lint.sh<br/>gplint: scenario-has-then, no-same-shape"]):::hook
+  L -- "fails" --> X1["fix the Gherkin (table, add a Then)"]:::block
+  L -- "passes" --> R["CLAUDE · runs red build<br/>scripts/gradle-builds.sh test"]:::claude
+
+  subgraph GR["GRADLE · bdd-log"]
+    M["each Test task writes<br/>build/cucumber/*.ndjson"]:::gradle --> RR["record-run.sh<br/>+ features.mjs results"]:::gradle
+    RR --> J[".claude/bdd-runs/*.json<br/>+ BDD_RUN line in the log"]:::gradle
+  end
+  R --> M
+
+  W["CLAUDE · edits src/main/kotlin"]:::claude
+  J -.->|"read by"| P
+  W --> P(["CLAUDE HOOK · PreToolUse, Edit/Write<br/>gherkin-first.sh: real scenario changed?<br/>red run logged on behaviour?"]):::hook
+  P -- "no" --> X2["write blocked"]:::block
+  P -- "yes" --> G["CLAUDE · runs green build<br/>same scenarios must PASS"]:::claude
+  G --> M
+
+  G --> S(["CLAUDE HOOK · Stop<br/>check.sh runs GRADLE check: detekt,<br/>Kover 80%, CPD, architecture test"]):::hook
+  S -- "fails" --> X4["Claude can't stop until fixed"]:::block
+  S -- "passes" --> C(["GIT HOOK · .githooks/pre-commit<br/>scenario changed, lint passes,<br/>touched scenarios red then green"]):::git
+  C -- "fails" --> X5["commit refused"]:::block
+  C -- "passes" --> D(["committed ✓"]):::git
+```
+
+Not drawn: `gate-bash.sh` (before a shell command, blocks a raw test command
+that would skip the log) and `refactor-prompt.sh` (on each prompt, lets the
+author switch refactor mode with `refactor-mode on "why"`, `off` or `status`).
+
 ## What it enforces
 
 | Gate | When it runs | What it does |
