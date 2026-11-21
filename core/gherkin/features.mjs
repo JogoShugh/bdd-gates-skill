@@ -262,6 +262,13 @@ function verdict(opts, paths) {
 }
 
 function lint(paths) {
+  // gplint finds its rules, its own and these, by a glob of the rules folder's path. Under a path with glob
+  // characters that glob may find none, and gplint then lints with no rules at all.
+  if (/[*?[\]{}()!]/.test(here)) {
+    process.stderr.write(`bdd-gates cannot lint feature files under a path with glob characters: ${here}\n`
+      + 'gplint reads its rules folder as a glob there. Move the repo to a path without * ? [ ] { } ( ) !\n');
+    return 1;
+  }
   const bin = join(here, 'node_modules', 'gplint', 'bin', 'gplint.js');
   // The files come first: -r takes a list, and would swallow any file named after it.
   const run = spawnSync(process.execPath, [

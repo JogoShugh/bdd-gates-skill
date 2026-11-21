@@ -68,6 +68,20 @@ fi
 mkdir -p "$repo/.claude" && touch "$repo/.claude/tdd-events.log"
 [ -z "$(git -C "$repo" status --porcelain -- .claude/tdd-events.log)" ] && ok "event log is ignored by git" || bad "event log shows in git status"
 
+# gplint reads its rules folders as globs, so under a path with glob characters it loads no rules. The
+# lint must refuse and say why, not report every rule missing.
+echo "lint under a path with glob characters"
+globbed="$work/glob [x]/.claude"
+mkdir -p "$globbed"
+cp -R "$skill_dir/core/gherkin" "$globbed/gherkin"
+printf "$scenario" > "$work/ok.feature"
+out=$(node --no-warnings "$globbed/gherkin/features.mjs" lint -- "$work/ok.feature" 2>&1) \
+  && bad "the lint passed with no rules loaded" \
+  || { printf '%s' "$out" | grep -q 'glob characters' \
+    && ok "the lint refuses a path with glob characters and says why" \
+    || bad "the lint under a globbed path: $(printf '%s' "$out" | head -3)"; }
+rm -rf "$work/glob [x]" "$work/ok.feature"
+
 for stack_dir in "$skill_dir"/stacks/*/; do
   stack=$(basename "$stack_dir")
   case "$stack" in _*) continue ;; esac
@@ -189,6 +203,21 @@ for stack_dir in "$skill_dir"/stacks/*/; do
       || bad "staged lint output: $(printf '%s' "$out" | head -8)"; }
   cp "$work/feature.keep" "$feat"
   git -C "$repo" add "$feat_rel"
+  # With no folder for the staged copies, pre-commit refuses rather than lint nothing.
+  if [ "$(id -u)" -eq 0 ]; then
+    echo "  SKIP the git directory cannot be made read-only as root"
+  else
+    printf '\n' >> "$feat"
+    git -C "$repo" add "$feat_rel"
+    chmod 555 "$repo/.git"
+    out=$(cd "$repo" && .githooks/pre-commit 2>&1) && bad "pre-commit passed with nowhere to copy the staged features" \
+      || { printf '%s' "$out" | grep -q 'staged feature files could not be copied' \
+        && ok "pre-commit refuses when the staged features cannot be copied" \
+        || bad "no folder for staged copies, refused for another reason: $(printf '%s' "$out" | head -4)"; }
+    chmod 755 "$repo/.git"
+    cp "$work/feature.keep" "$feat"
+    git -C "$repo" add "$feat_rel"
+  fi
 
   # Several modules: the last line passing is not enough when another module's latest run failed.
   printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL module=a\n%s MAIN_WRITE %s\n%s BDD_RUN FAIL module=a\n%s BDD_RUN PASS module=b\n' \

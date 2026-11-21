@@ -167,7 +167,7 @@ buys that plugin.
 
 ## 9. Red proof
 
-Last run 17 Nov 2026, on JDK 21, Kotlin 2.0.21, Detekt 1.23.8, Kover 0.9.1, CPD plugin 3.5 with PMD 7.29.0,
+Done by hand on 17 Nov 2026, on JDK 21, Kotlin 2.0.21, Detekt 1.23.8, Kover 0.9.1, CPD plugin 3.5 with PMD 7.29.0,
 Cucumber 7.18.0 and Konsist 0.17.3, in a throwaway repo with two builds (one nested two levels down) sharing one
 `build-logic`:
 
@@ -178,10 +178,11 @@ Cucumber 7.18.0 and Konsist 0.17.3, in a throwaway repo with two builds (one nes
   undefined step (`test`, logged `BDD_RUN FAIL`).
 - `test --tests ArchitectureBoundaryTest` logs nothing.
 
-`scripts/e2e-gradle-kotlin.sh` repeats this proof, so it need not be done by hand. On 20 Nov 2026 it
-passed 22 of 22 checks. Besides the Gherkin-first cycle and two builds whose root projects share a name (each
-logged under its own folder, so one's pass cannot hide the other's failure), it plants one break per tool and expects the named
-task to fail: a 62-line function (`detekt`, LongMethod), a 25-line block copied into a second file (`cpdCheck`),
+`scripts/e2e-gradle-kotlin.sh` repeats this proof, so it need not be done by hand. On 21 Nov 2026, on JDK 21, it
+passed 22 of 22 checks. Run it on JDK 21: on JDK 25 the Gradle 8.13 wrapper it copies from artie fails before
+any task runs. Besides the Gherkin-first cycle and two builds whose root projects share a name (each logged
+under its own folder, so one's pass cannot hide the other's failure), it plants one break per tool and expects
+the named task to fail: a 62-line function (`detekt`, LongMethod), a 25-line block copied into a second file (`cpdCheck`),
 an untested object (`koverVerify`), a core import of `java.net.URI` and a `@Suppress("MagicNumber")` (both
 the Konsist test). It then checks that `check` runs `detektMain`, `cpdCheck`, `koverVerify` and `test`, and that
 `check` passes again once the planted files are gone.
