@@ -25,6 +25,7 @@ for arg in "$@"; do
 done
 
 root=$(bdd_root)
+out=""
 present=()
 for m in ${messages[@]+"${messages[@]}"}; do [ -s "$m" ] && present+=("$m"); done
 if [ ${#present[@]} -gt 0 ] && bdd_gherkin_ready; then
@@ -35,14 +36,13 @@ if [ ${#present[@]} -gt 0 ] && bdd_gherkin_ready; then
   # name is tried only while the name was taken: a folder that cannot be written records the run without
   # results, and never loops.
   n=1
-  out=""
   while [ "$n" -le 1000 ]; do
     if (set -C; : > "$runs/$stamp-$n.json") 2>/dev/null; then out=$runs/$stamp-$n.json; break; fi
     [ -e "$runs/$stamp-$n.json" ] || break
     n=$((n + 1))
   done
 fi
-if [ -n "${out:-}" ]; then
+if [ -n "$out" ]; then
   rel_within=""
   [ -n "$within" ] && rel_within=$(bdd_rel "$(cd "$within" 2>/dev/null && pwd || echo "$within")")
   if (cd "$root" && node --no-warnings "$(bdd_gherkin)/features.mjs" results ${rel_within:+--within "$rel_within"} \
@@ -51,7 +51,8 @@ if [ -n "${out:-}" ]; then
   else
     rm -f "$out"
   fi
-  rm -f "${present[@]}"
 fi
+# Read or not, the streams go, so the next run can never be judged by this one's.
+[ ${#present[@]} -eq 0 ] || ! bdd_gherkin_ready || rm -f "${present[@]}"
 
 bdd_append "BDD_RUN $status${fields[@]+ ${fields[*]}}"

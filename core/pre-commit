@@ -24,7 +24,7 @@ bdd_load
 staged_prod=()
 while IFS= read -r f; do
   bdd_is_prod "$f" && staged_prod+=("$f")
-done < <(git diff --cached --name-only --diff-filter=ACMR)
+done < <(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR)
 [ ${#staged_prod[@]} -gt 0 ] || exit 0
 
 log=$(bdd_log)
@@ -46,7 +46,7 @@ if bdd_refactor_present; then
     p=${line:3}
     p=${p##* -> }
     bdd_is_test "$p" && reasons+=("a refactor leaves tests and features as they are, but $p differs from HEAD")
-  done < <(git status --porcelain -uall)
+  done < <(git -c core.quotePath=false status --porcelain -uall)
   head=$(bdd_refactor_field head)
   window=$(awk -v on="REFACTOR_ON head=$head" 'index($0, on) { buf = ""; found = 1; next } found { buf = buf $0 "\n" } END { printf "%s", buf }' "$log" 2>/dev/null)
   first_line() { printf '%b' "$window" | grep -nE -- "$1" | head -1 | cut -d: -f1; }
@@ -109,7 +109,13 @@ last_run=$(printf '%s\n' "$recent" | grep -E -- "$run_re" | tail -1)
 
 reasons=()
 [ -n "$feature" ] || reasons+=("no FEATURE_WRITE since the last commit")
-[ -n "$fail" ] || reasons+=("no BDD run failed on behaviour since the last commit (the scenario was never seen red)")
+if [ -z "$fail" ]; then
+  if printf '%s\n' "$recent" | grep -E -- "${run_re}FAIL" | grep -qv ' reason='; then
+    reasons+=("a BDD run failed only before the last feature change, so the steps being committed were never seen red: run the suite again before writing production code")
+  else
+    reasons+=("no BDD run failed on behaviour since the last commit (the scenario was never seen red)")
+  fi
+fi
 
 # The feature change must be a scenario change, and the staged features must pass the feature lint.
 # The Gherkin tools failing (an old Node, a broken install) fails the check: it never passes by default.
@@ -129,11 +135,15 @@ if bdd_gherkin_ready; then
   # The staged copy is what is committed, so the staged copy is linted, in a folder of its own inside the git
   # directory. The lint may name a copy by its real path (/private/var/... for /var/... on macOS), so both
   # forms are taken off its findings.
-  staged_copies=$(mktemp -d "$(git rev-parse --absolute-git-dir)/bdd-staged.XXXXXX")
-  trap 'rm -rf "$staged_copies"' EXIT
-  staged_real=$(cd "$staged_copies" && pwd -P)
   staged_features=()
-  while IFS= read -r f; do
+  if staged_copies=$(mktemp -d "$(git rev-parse --absolute-git-dir)/bdd-staged.XXXXXX") && [ -d "$staged_copies" ]; then
+    trap 'rm -rf "$staged_copies"' EXIT
+    staged_real=$(cd "$staged_copies" && pwd -P)
+  else
+    staged_copies=""
+    reasons+=("the staged feature files could not be copied for the feature lint (is the git directory writable?)")
+  fi
+  [ -z "$staged_copies" ] || while IFS= read -r f; do
     git cat-file -e ":$f" 2>/dev/null || continue
     mkdir -p "$staged_copies/$(dirname "$f")"
     git show ":$f" > "$staged_copies/$f"
@@ -142,8 +152,8 @@ if bdd_gherkin_ready; then
   if [ ${#staged_features[@]} -gt 0 ] && ! lint_out=$(bdd_lint_features "${staged_features[@]}" 2>&1); then
     reasons+=("the staged feature files fail the feature lint:")
     while IFS= read -r line; do
-      line=${line//$staged_real\//}
-      [ -n "$line" ] && reasons+=("  ${line//$staged_copies\//}")
+      line=${line//"$staged_real/"/}
+      [ -n "$line" ] && reasons+=("  ${line//"$staged_copies/"/}")
     done <<<"$lint_out"
   fi
 

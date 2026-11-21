@@ -171,7 +171,10 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL\n%s FEATURE_WRITE %s\n%s MAIN_WRITE %s\n%s BDD_RUN PASS\n' \
     2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$feat_rel" 2999-01-01T00:00:03Z "$prod_rel" \
     2999-01-01T00:00:04Z > "$repo/.claude/tdd-events.log"
-  expect_exit 1 "pre-commit rejects a red run from before the last feature change, run by run" bash -c "cd '$repo' && .githooks/pre-commit"
+  out=$(cd "$repo" && .githooks/pre-commit 2>&1) && bad "pre-commit accepted a red run from before the last feature change, run by run" \
+    || { printf '%s' "$out" | grep -q "failed only before the last feature change" \
+      && ok "pre-commit rejects a red run from before the last feature change, run by run, and says so" \
+      || bad "red before the last feature change, refused for another reason: $(printf '%s' "$out" | head -4)"; }
   printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL\n%s MAIN_WRITE %s\n%s BDD_RUN PASS\n' \
     2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$prod_rel" 2999-01-01T00:00:03Z > "$repo/.claude/tdd-events.log"
 
@@ -232,22 +235,33 @@ for stack_dir in "$skill_dir"/stacks/*/; do
     BDD_GATES_ROOT=$repo "$repo/.claude/bdd-gates/record-run.sh" FAIL "module=p$n" "messages=$repo/parallel-$n.ndjson" >/dev/null 2>&1 &
   done
   wait
+  # A variable named out in the caller's environment is not taken for a results file.
+  echo keep > "$work/outside"
+  out=$work/outside BDD_GATES_ROOT=$repo "$repo/.claude/bdd-gates/record-run.sh" PASS module=env >/dev/null 2>&1
+  [ "$(cat "$work/outside")" = keep ] && ! grep ' module=env ' "$repo/.claude/tdd-events.log" | grep -q results= \
+    && ok "record-run ignores an inherited out variable" || bad "record-run wrote to an inherited out: $(grep ' module=env ' "$repo/.claude/tdd-events.log")"
   distinct=$(grep ' module=p[1-6] ' "$repo/.claude/tdd-events.log" | sed -n 's/.* results=\([^ ]*\).*/\1/p' | sort -u | wc -l | tr -d ' ')
   [ "$distinct" = 6 ] && ok "six runs recorded at once keep six results files" || bad "six runs recorded at once kept $distinct results files"
   # A results folder that cannot be written: the run is still recorded, without results, and never hangs.
   cp "$work/messages.ndjson.keep" "$repo/readonly.ndjson"
-  chmod 555 "$repo/.claude/bdd-runs"
-  BDD_GATES_ROOT=$repo "$repo/.claude/bdd-gates/record-run.sh" FAIL module=ro "messages=$repo/readonly.ndjson" >/dev/null 2>&1 &
-  pid=$!
-  for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
-  if kill -0 "$pid" 2>/dev/null; then
-    pkill -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null
-    bad "record-run hangs when the results folder cannot be written"
+  # root writes to a read-only folder anyway, so the case is only meaningful for another user.
+  if [ "$(id -u)" = 0 ]; then
+    echo "  SKIP  read-only results folder (running as root)"
   else
-    grep -q ' BDD_RUN FAIL module=ro' "$repo/.claude/tdd-events.log" \
-      && ok "record-run records the run when the results folder cannot be written" || bad "record-run logged no run for a read-only results folder"
+    chmod 555 "$repo/.claude/bdd-runs"
+    BDD_GATES_ROOT=$repo "$repo/.claude/bdd-gates/record-run.sh" FAIL module=ro "messages=$repo/readonly.ndjson" >/dev/null 2>&1 &
+    pid=$!
+    for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    if kill -0 "$pid" 2>/dev/null; then
+      pkill -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null
+      bad "record-run hangs when the results folder cannot be written"
+    else
+      grep -q ' BDD_RUN FAIL module=ro' "$repo/.claude/tdd-events.log" \
+        && ok "record-run records the run when the results folder cannot be written" || bad "record-run logged no run for a read-only results folder"
+      [ ! -e "$repo/readonly.ndjson" ] && ok "and still deletes the message stream" || bad "the message stream was kept"
+    fi
+    chmod 755 "$repo/.claude/bdd-runs"
   fi
-  chmod 755 "$repo/.claude/bdd-runs"
 
   set_config '.scenarioResults = true'
   runs=$repo/.claude/bdd-runs
@@ -297,6 +311,24 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   awk '/Scenario: twin/ && !done { skip = 3; done = 1 } skip > 0 { skip--; next } { print }' "$feat" > "$feat.tmp" && mv "$feat.tmp" "$feat"
   expect_exit 2 "prod write blocked when the first of two same-named scenarios is deleted" hook gherkin-first.sh "$prod"
   git -C "$repo" checkout -q -- "$feat_rel"
+  # A scenario rewritten to the steps of one deleted in the same change is a change, not a rename.
+  # The second twin goes, and "a probe" takes its steps.
+  awk '/Scenario: a probe/ { print; getline; print "    Given a second twin"; getline; getline; print "    Then it is second"; next }
+       /Scenario: twin/ { twins++ } twins == 2 && skip == 0 && !done { skip = 3; done = 1 } skip > 0 { skip--; next } { print }' \
+    "$feat" > "$feat.tmp" && mv "$feat.tmp" "$feat"
+  expect_exit 0 "prod write allowed when a scenario takes the steps of one deleted" hook gherkin-first.sh "$prod"
+  git -C "$repo" checkout -q -- "$feat_rel"
+  # A feature file whose name git would quote (core.quotePath) is still read and linted.
+  odd=$(dirname "$feat_rel")/café.feature
+  [ "$odd" = ./café.feature ] && odd=café.feature
+  printf 'Feature: café\n  Scenario: an order\n    Given a café\n    When a coffee is ordered\n' > "$repo/$odd"
+  git -C "$repo" add -- "$odd" "$prod_rel"
+  printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL\n%s MAIN_WRITE %s\n%s BDD_RUN PASS\n' \
+    2999-01-01T00:00:00Z "$odd" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$prod_rel" 2999-01-01T00:00:03Z > "$repo/.claude/tdd-events.log"
+  out=$(cd "$repo" && .githooks/pre-commit 2>&1)
+  printf '%s' "$out" | grep -q 'has no Then step' \
+    && ok "pre-commit lints a feature whose name git quotes" || bad "café.feature was not linted: $(printf '%s' "$out" | head -4)"
+  git -C "$repo" reset -q -- "$odd" "$prod_rel" && rm -f "$repo/$odd"
 
   set_config '.lintCommand = "echo lint-broke; exit 3"'
   expect_exit 2 "lint gate reports failure on a lintable file" hook lint.sh "$prod"

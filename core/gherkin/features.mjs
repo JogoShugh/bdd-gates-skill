@@ -142,16 +142,19 @@ function changes(source, base, paths) {
     gone.set(before[key], [...(gone.get(before[key]) ?? []), key]);
   });
   const renamed = [];
-  const fromGone = (key) => {
-    const from = gone.get(after[key])?.shift();
-    if (from !== undefined) renamed.push({ from, to: key });
-    return from !== undefined;
+  const fromGone = (key, fits) => {
+    const list = gone.get(after[key]) ?? [];
+    const at = list.findIndex(fits);
+    if (at < 0) return false;
+    renamed.push({ from: list.splice(at, 1)[0], to: key });
+    return true;
   };
+  const added = Object.keys(after).filter((key) => !(key in before)).filter((key) => !fromGone(key, () => true));
   // Two scenarios of one name are told apart by order ("x", "x (again)"), so deleting the first shifts the
-  // second into its key: a key whose steps are now those of a key that went is that scenario, not a change.
+  // second into its key. Only that is a shift: a key whose steps are now those of its own "(again)" that went.
+  // Any other scenario rewritten to the steps of one deleted is a change.
   const changed = Object.keys(after).filter((key) => key in before && before[key] !== after[key])
-    .filter((key) => !fromGone(key));
-  const added = Object.keys(after).filter((key) => !(key in before)).filter((key) => !fromGone(key));
+    .filter((key) => !fromGone(key, (from) => from.startsWith(`${key} (again)`)));
   return {
     added,
     changed,

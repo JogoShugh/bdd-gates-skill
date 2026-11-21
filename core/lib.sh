@@ -66,7 +66,7 @@ bdd_features_dirty() {
     p=${p#\"}
     p=${p%\"}
     bdd_is_feature "$p" && return 0
-  done < <(cd "$(bdd_root)" && git status --porcelain -uall 2>/dev/null)
+  done < <(cd "$(bdd_root)" && git -c core.quotePath=false status --porcelain -uall 2>/dev/null)
   return 1
 }
 
@@ -86,7 +86,7 @@ bdd_changed_features() {
   if [ "$1" = staged ]; then
     while IFS= read -r p; do
       bdd_is_feature "$p" && echo "$p"
-    done < <(cd "$(bdd_root)" && git diff --cached --name-only --no-renames 2>/dev/null)
+    done < <(cd "$(bdd_root)" && git -c core.quotePath=false diff --cached --name-only --no-renames 2>/dev/null)
   else
     while IFS= read -r line; do
       p=${line:3}
@@ -94,7 +94,7 @@ bdd_changed_features() {
       p=${p#\"}
       p=${p%\"}
       bdd_is_feature "$p" && echo "$p"
-    done < <(cd "$(bdd_root)" && git status --porcelain -uall --no-renames 2>/dev/null)
+    done < <(cd "$(bdd_root)" && git -c core.quotePath=false status --porcelain -uall --no-renames 2>/dev/null)
   fi
 }
 
