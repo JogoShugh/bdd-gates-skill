@@ -5,9 +5,10 @@
 # checks it: the gate scripts and config, the git hooks and where git finds
 # them, the Claude Code settings that register these hooks, or the event log
 # the checks read, or the stack's own quality settings (protectedFiles in the
-# config: its linter, coverage and architecture rules). Nor may Claude skip the hooks with --no-verify, or name the
-# gate or the mode in any other tool call (scheduling, messaging, agents, MCP),
-# so Claude cannot send the author's switch prompt by another route.
+# config: its linter, coverage and architecture rules). Nor may Claude skip the hooks with --no-verify, name the
+# gate in an MCP call or another tool's command, or name the mode in any other
+# tool call (scheduling, messaging, agents), so Claude cannot send the author's
+# switch prompt by another route.
 # Claude may still run the pre-commit check and the test wrapper, and read
 # every one of these files. Exit 2 blocks the tool call.
 set -o pipefail
@@ -55,11 +56,25 @@ case "$tool" in
   Read | Grep | Glob | LS)
     # Reading the gate is allowed.
     ;;
-  *)
-    # Any other tool (scheduling, messaging, agents, MCP): its whole input may
-    # not name the gate or the mode, so Claude cannot send the author's switch.
+  mcp__*)
+    # An MCP tool may write files or run commands: its whole input may not
+    # name the gate or the mode.
     if jq -c '.tool_input // {}' <<<"$input" | grep -Eq -- "$protected"; then
       block "this call names the TDD gate or refactor mode."
+    fi
+    ;;
+  *)
+    # Any other tool (scheduling, messaging, agents, plans, todos): one that
+    # runs a command is held to the whole list; the rest may name the gate
+    # (a plan step that runs the pre-commit check), but not the mode, so
+    # Claude cannot send the author's switch. A subagent's own tool calls
+    # pass through these hooks too.
+    if jq -e '.tool_input.command? // empty' >/dev/null 2>&1 <<<"$input"; then
+      if jq -c '.tool_input' <<<"$input" | grep -Eq -- "$protected"; then
+        block "this command reaches the TDD gate or refactor mode."
+      fi
+    elif jq -c '.tool_input // {}' <<<"$input" | grep -Eq -- 'bdd-refactor|refactor-mode'; then
+      block "this call names refactor mode."
     fi
     ;;
 esac

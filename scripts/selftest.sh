@@ -153,6 +153,32 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   git -C "$repo" add "$feat_rel"
   expect_exit 0 "pre-commit accepts a staged feature change that adds a scenario" bash -c "cd '$repo' && .githooks/pre-commit"
 
+  # The Gherkin tools crash (an old Node, a broken install): the check fails closed. With no feature file
+  # staged there is nothing to lint, so only the scenario count stands between this commit and the log.
+  mjs=$repo/.claude/bdd-gates/gherkin/features.mjs
+  cp "$mjs" "$work/features.mjs.keep"
+  echo 'throw new Error("crashed");' > "$mjs"
+  git -C "$repo" reset -q -- "$feat_rel"
+  expect_exit 1 "pre-commit refuses when the Gherkin tools crash" bash -c "cd '$repo' && .githooks/pre-commit"
+  git -C "$repo" add "$feat_rel"
+  cp "$work/features.mjs.keep" "$mjs"
+
+  # A run that failed before the feature was written says nothing about the new Gherkin.
+  printf '%s BDD_RUN FAIL\n%s FEATURE_WRITE %s\n%s MAIN_WRITE %s\n%s BDD_RUN PASS\n' \
+    2999-01-01T00:00:00Z 2999-01-01T00:00:01Z "$feat_rel" 2999-01-01T00:00:02Z "$prod_rel" 2999-01-01T00:00:03Z > "$repo/.claude/tdd-events.log"
+  expect_exit 1 "pre-commit rejects a red run from before the feature was written" bash -c "cd '$repo' && .githooks/pre-commit"
+  printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL\n%s MAIN_WRITE %s\n%s BDD_RUN PASS\n' \
+    2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$prod_rel" 2999-01-01T00:00:03Z > "$repo/.claude/tdd-events.log"
+
+  # The staged copy is what gets committed, so the staged copy is what the lint reads.
+  cp "$feat" "$work/feature.keep"
+  printf '\n  Scenario: a probe with no outcome\n    Given a start\n    When it waits\n' >> "$feat"
+  git -C "$repo" add "$feat_rel"
+  printf '    Then it rests\n' >> "$feat"
+  expect_exit 1 "pre-commit lints the staged feature, not the working copy" bash -c "cd '$repo' && .githooks/pre-commit"
+  cp "$work/feature.keep" "$feat"
+  git -C "$repo" add "$feat_rel"
+
   # Several modules: the last line passing is not enough when another module's latest run failed.
   printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL module=a\n%s MAIN_WRITE %s\n%s BDD_RUN FAIL module=a\n%s BDD_RUN PASS module=b\n' \
     2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$prod_rel" \
@@ -182,6 +208,7 @@ for stack_dir in "$skill_dir"/stacks/*/; do
     echo '{"testStepFinished":{"testCaseStartedId":"c2","testStepId":"x","testStepResult":{"status":"UNDEFINED"}}}'
     echo '{"testCaseFinished":{"testCaseStartedId":"c2","willBeRetried":false}}'
   } > "$ndjson"
+  cp "$ndjson" "$work/messages.ndjson.keep"
   BDD_GATES_ROOT=$repo "$repo/.claude/bdd-gates/record-run.sh" FAIL module=m "messages=$ndjson" >/dev/null 2>&1
   recorded=$(tail -1 "$repo/.claude/tdd-events.log" | sed -n 's/.* results=\([^ ]*\).*/\1/p')
   if [ -n "$recorded" ] && [ "$(jq -r --arg k "$feat_rel :: another probe" '.[$k]' "$repo/$recorded")" = UNDEFINED ] \
@@ -191,6 +218,14 @@ for stack_dir in "$skill_dir"/stacks/*/; do
     bad "record-run did not record the scenario (line: $(tail -1 "$repo/.claude/tdd-events.log"))"
   fi
   expect_exit 2 "Claude may not write the run results" tool_hook protect-gate.sh Write file_path "$repo/.claude/bdd-runs/forged.json"
+  # Modules of a parallel build record at the same moment: each run keeps its own results file.
+  for n in 1 2 3 4 5 6; do cp "$work/messages.ndjson.keep" "$repo/parallel-$n.ndjson"; done
+  for n in 1 2 3 4 5 6; do
+    BDD_GATES_ROOT=$repo "$repo/.claude/bdd-gates/record-run.sh" FAIL "module=p$n" "messages=$repo/parallel-$n.ndjson" >/dev/null 2>&1 &
+  done
+  wait
+  distinct=$(grep ' module=p[1-6] ' "$repo/.claude/tdd-events.log" | sed -n 's/.* results=\([^ ]*\).*/\1/p' | sort -u | wc -l | tr -d ' ')
+  [ "$distinct" = 6 ] && ok "six runs recorded at once keep six results files" || bad "six runs recorded at once kept $distinct results files"
 
   set_config '.scenarioResults = true'
   runs=$repo/.claude/bdd-runs
@@ -213,11 +248,27 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   expect_exit 1 "pre-commit rejects a new scenario still failing after the code" bash -c "cd '$repo' && .githooks/pre-commit"
   sequence new-red old-green
   expect_exit 1 "pre-commit rejects a new scenario that never ran after the code" bash -c "cd '$repo' && .githooks/pre-commit"
+  printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL results=.claude/bdd-runs/new-red.json\n%s FEATURE_WRITE %s\n%s MAIN_WRITE %s\n%s BDD_RUN PASS results=.claude/bdd-runs/new-green.json\n' \
+    2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$feat_rel" 2999-01-01T00:00:03Z "$prod_rel" \
+    2999-01-01T00:00:04Z > "$repo/.claude/tdd-events.log"
+  expect_exit 1 "pre-commit rejects a red run from before the last feature change" bash -c "cd '$repo' && .githooks/pre-commit"
+  base=${feat_rel##*/}
+  jq -n --arg k "${base#?} :: another probe" '{($k): "FAILED"}' > "$runs/suffix-red.json"
+  sequence suffix-red new-green
+  expect_exit 1 "pre-commit rejects a red result for a file whose name only ends the same way" bash -c "cd '$repo' && .githooks/pre-commit"
   set_config '.scenarioResults = false'
 
   git -C "$repo" reset -q
   git -C "$repo" add "$feat_rel"
   expect_exit 0 "pre-commit ignores commits with no production code" bash -c "cd '$repo' && .githooks/pre-commit"
+
+  git -C "$repo" reset -q --hard
+  git -C "$repo" mv "$feat_rel" "${feat_rel%.feature}Moved.feature"
+  expect_exit 2 "prod write blocked when a feature file is only moved" hook gherkin-first.sh "$prod"
+  git -C "$repo" reset -q --hard
+  sed 's/Scenario: a probe/Scenario: a retitled probe/' "$feat" > "$feat.tmp" && mv "$feat.tmp" "$feat"
+  expect_exit 2 "prod write blocked when a scenario is only retitled" hook gherkin-first.sh "$prod"
+  git -C "$repo" checkout -q -- "$feat_rel"
 
   set_config '.lintCommand = "echo lint-broke; exit 3"'
   expect_exit 2 "lint gate reports failure on a lintable file" hook lint.sh "$prod"
@@ -308,11 +359,14 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   expect_exit 0 "Claude may run the pre-commit check" tool_hook protect-gate.sh Bash command '.githooks/pre-commit'
   expect_exit 2 "a non-Bash tool call naming the mode is blocked" tool_hook protect-gate.sh ScheduleWakeup prompt 'refactor-mode on "x"'
   expect_exit 0 "Claude may read the gate" tool_hook protect-gate.sh Read file_path "$repo/scripts/refactor-mode"
+  expect_exit 0 "a plan that names the pre-commit check can be submitted" tool_hook protect-gate.sh ExitPlanMode plan "run .githooks/pre-commit"
+  expect_exit 2 "an MCP tool may not write the gate" tool_hook protect-gate.sh mcp__files__write_file path "$repo/.githooks/pre-commit"
   quality=$(jq -r '.protectedSample // empty' "$stack_dir/stack.json")
   if [ -n "$quality" ]; then
     expect_exit 2 "Claude may not edit the quality settings ($quality)" tool_hook protect-gate.sh Edit file_path "$repo/pkg/$quality"
     expect_exit 2 "Claude may not change them from the shell" tool_hook protect-gate.sh Bash command "sed -i s/error/off/ pkg/$quality"
     expect_exit 0 "Claude may read the quality settings" tool_hook protect-gate.sh Read file_path "$repo/pkg/$quality"
+    expect_exit 0 "a plan that names the quality settings can be submitted" tool_hook protect-gate.sh ExitPlanMode plan "explain $quality"
     expect_exit 0 "a file that only ends the same way is not protected" tool_hook protect-gate.sh Edit file_path "$repo/my$quality.txt"
   fi
 
@@ -326,6 +380,12 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   out=$(prompt_hook 'please explain what refactor-mode on "x" does')
   [ ! -f "$mode_file" ] && [ -z "$out" ] \
     && ok "a sentence that mentions the mode switches nothing" || bad "a mention switched the mode: $out"
+  out=$(prompt_hook "$(printf 'refactor-mode on "rename"\nand tidy the tests too')")
+  [ ! -f "$mode_file" ] && [ -z "$out" ] \
+    && ok "a prompt of several lines switches nothing" || bad "a prompt of several lines switched the mode: $out"
+  out=$(prompt_hook 'refactor-mode on')
+  [ ! -f "$mode_file" ] && printf '%s' "$out" | grep -q 'failed' \
+    && ok "refactor-mode on with no reason is reported as failed" || bad "no reason given, and: $out"
 done
 
 echo ""

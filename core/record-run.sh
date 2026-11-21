@@ -31,8 +31,9 @@ if [ ${#present[@]} -gt 0 ] && bdd_gherkin_ready; then
   runs=$root/.claude/bdd-runs
   mkdir -p "$runs"
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  # Claimed atomically (noclobber), as the modules of a parallel build record in the same second.
   n=1
-  while [ -e "$runs/$stamp-$n.json" ]; do n=$((n + 1)); done
+  until (set -C; : > "$runs/$stamp-$n.json") 2>/dev/null; do n=$((n + 1)); done
   out=$runs/$stamp-$n.json
   rel_within=""
   [ -n "$within" ] && rel_within=$(bdd_rel "$(cd "$within" 2>/dev/null && pwd || echo "$within")")

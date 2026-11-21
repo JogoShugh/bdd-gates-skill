@@ -114,8 +114,10 @@ EOF
   sed -e 's/your.pkg.domain/demo.domain/' -e 's/listOf("org.gradle"/listOf("java.net", "org.gradle"/' \
     "$templates/ArchitectureBoundaryTest.kt" > "$d/src/test/kotlin/demo/domain/ArchitectureBoundaryTest.kt"
 }
-build alpha alpha ..
-build nested/beta beta ../..
+# Both builds name their root project "lamp", as separate builds often share names: their runs must still be
+# told apart in the log.
+build alpha lamp ..
+build nested/beta lamp ../..
 "$skill_dir/scripts/install.sh" gradle-kotlin "$repo" >/dev/null 2>&1 || { echo "install failed" >&2; exit 1; }
 git config core.hooksPath .githooks
 git add -A && git commit -q --no-verify -m "two builds, gated"
@@ -202,6 +204,19 @@ git add -A
 out=$(.githooks/pre-commit 2>&1) && bad "pre-commit accepted a scenario never seen red" \
   || { printf '%s' "$out" | grep -q "none of the scenarios this change adds or changes was seen failing" \
     && ok "pre-commit refuses it: the new scenario was never seen red" || bad "refused for another reason: $out"; }
+
+echo "two builds whose projects share a name"
+# alpha's run fails, then beta's passes. Logged under one name, beta's pass would hide alpha's failure.
+cp "$steps" "$steps.keep"
+sed -i.bak 's/assertTrue(lamp.on)/assertTrue(!lamp.on)/' "$steps" && rm -f "$steps.bak"
+printf '\n/** True when the lamp gives light. */\nfun Lamp.lit(): Boolean = on\n' >> "$lamp"
+hook log-event.sh "$lamp"
+scripts/gradle-builds.sh test >/dev/null 2>&1
+mv "$steps.keep" "$steps"
+git add -A
+out=$(.githooks/pre-commit 2>&1)
+printf '%s' "$out" | grep -q "module alpha: its latest BDD run after the last production write is not PASS" \
+  && ok "pre-commit refuses: alpha's failure is not hidden by beta's pass" || bad "alpha's failure was hidden: $out"
 
 echo "the quality tools fail on bad code"
 git reset -q --hard

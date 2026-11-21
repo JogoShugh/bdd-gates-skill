@@ -14,7 +14,17 @@
 //     not a BDD run: neither is recorded.
 val gateRoot: File = generateSequence(rootDir) { it.parentFile }
     .firstOrNull { File(it, ".claude/bdd-gates.json").exists() } ?: rootDir
-val module: String = project.path.removePrefix(":").ifEmpty { rootProject.name }
+// The module as the log knows it: in a build nested in the repo, the build's folder first (nested/beta,
+// nested/beta:app), as two builds may well name their projects alike. A build at the repo's root keeps the
+// project's own name.
+val buildFolder: String = rootDir.relativeTo(gateRoot).invariantSeparatorsPath
+val module: String = project.path.removePrefix(":").let { path ->
+    when {
+        buildFolder.isEmpty() -> path.ifEmpty { rootProject.name }
+        path.isEmpty() -> buildFolder
+        else -> "$buildFolder:$path"
+    }
+}
 val streams: File = layout.buildDirectory.dir("cucumber").get().asFile
 val buildStarted: Long = System.currentTimeMillis()
 

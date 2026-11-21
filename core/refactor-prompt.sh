@@ -13,7 +13,10 @@ set -o pipefail
 input=$(cat)
 prompt=$(jq -r '.prompt // empty' <<<"$input" | sed -E '1s/^[[:space:]]+//; $s/[[:space:]]+$//')
 
+# One line only: a longer message is a message, not the switch.
+case "$prompt" in *$'\n'*) exit 0 ;; esac
 case "$prompt" in
+  'refactor-mode on') set -- on "" ;;
   'refactor-mode on '*)
     reason=${prompt#refactor-mode on }
     reason=${reason#\"}

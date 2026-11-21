@@ -3,7 +3,7 @@
 //
 //   features.mjs changes --source worktree|staged [--base HEAD] -- <feature paths...>
 //     Compares each feature at the base with its working-tree or staged version, scenario by scenario, and
-//     prints JSON: { added, changed, removed, before, after, invalid }. A scenario is a Cucumber pickle: one per
+//     prints JSON: { added, changed, removed, renamed, before, after, invalid }. A scenario is a Cucumber pickle: one per
 //     Scenario, one per Examples row of a Scenario Outline, Background steps included. It is known by its file,
 //     its name and its Examples row ("path :: name :: row"), and it changed when its steps did (keyword type,
 //     text, doc string, table). Descriptions, comments, tags, blank lines and order change nothing.
@@ -19,7 +19,7 @@
 //     green runs (the latest result of each counts). JSON { touched, red, unproven }.
 //
 // Run from the repository's root. Paths are repo-relative. A result's uri ("classpath:features/a.feature",
-// "features/a.feature") matches a feature path that ends with it.
+// "features/a.feature") matches a feature path that is it, or ends with "/" and it.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -135,10 +135,24 @@ function changes(source, base, paths) {
       invalid.push({ path, error: String(error.message ?? error).split('\n')[0] });
     }
   });
+  // A scenario that only moved (its file renamed) or was only retitled has the same steps under a new key: it
+  // is renamed, not added, so a rename can never pass for a change of behaviour. Paired one to one.
+  const gone = new Map();
+  Object.keys(before).filter((key) => !(key in after)).forEach((key) => {
+    gone.set(before[key], [...(gone.get(before[key]) ?? []), key]);
+  });
+  const renamed = [];
+  const added = Object.keys(after).filter((key) => !(key in before)).filter((key) => {
+    const from = gone.get(after[key])?.shift();
+    if (from === undefined) return true;
+    renamed.push({ from, to: key });
+    return false;
+  });
   return {
-    added: Object.keys(after).filter((key) => !(key in before)),
+    added,
     changed: Object.keys(after).filter((key) => key in before && before[key] !== after[key]),
-    removed: Object.keys(before).filter((key) => !(key in after)),
+    removed: [...gone.values()].flat(),
+    renamed,
     invalid,
     before: tally(before, featuresBefore),
     after: tally(after, featuresAfter),
@@ -217,7 +231,8 @@ function statusOf(key, all) {
   const rest = key.slice(at);
   const match = Object.keys(all).find((k) => {
     const i = k.indexOf(SEP);
-    return k.slice(i) === rest && path.endsWith(uriPath(k.slice(0, i)));
+    const tail = uriPath(k.slice(0, i));
+    return k.slice(i) === rest && (path === tail || path.endsWith(`/${tail}`));
   });
   return match === undefined ? undefined : all[match];
 }
