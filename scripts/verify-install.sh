@@ -35,7 +35,9 @@ fi
 [ -e "$target/$feature" ] && { echo "probe $feature already exists; aborting" >&2; exit 1; }
 mkdir -p "$(dirname "$target/$feature")"
 trap 'rm -f "$target/$feature"' EXIT
-echo "Feature: bdd-gates probe" > "$target/$feature"
+# Steps of its own: a scenario with the same steps as one removed would be a move, which unlocks nothing.
+printf 'Feature: bdd-gates probe\n  Scenario: a probe\n    Given the bdd-gates probe\n    When it checks the gate\n    Then the gate lets it through\n' \
+  > "$target/$feature"
 if payload "$prod" | "$gate" 2>/dev/null; then
   echo "PASS  write to $prod allowed once $feature changed"
 else

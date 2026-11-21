@@ -21,11 +21,12 @@ bdd_list() { jq -r --arg k "$1" '.[$k] // [] | .[]' "$(bdd_config)"; }
 
 # Loads the pattern lists once so matching does not re-run jq per path.
 bdd_load() {
-  PROD_PATTERNS=(); PROD_EXCLUDES=(); FEATURE_PATTERNS=(); LINT_PATTERNS=()
+  PROD_PATTERNS=(); PROD_EXCLUDES=(); FEATURE_PATTERNS=(); TEST_PATTERNS=(); LINT_PATTERNS=()
   local p
   while IFS= read -r p; do [ -n "$p" ] && PROD_PATTERNS+=("$p"); done < <(bdd_list prodPatterns)
   while IFS= read -r p; do [ -n "$p" ] && PROD_EXCLUDES+=("$p"); done < <(bdd_list prodExcludePatterns)
   while IFS= read -r p; do [ -n "$p" ] && FEATURE_PATTERNS+=("$p"); done < <(bdd_list featurePatterns)
+  while IFS= read -r p; do [ -n "$p" ] && TEST_PATTERNS+=("$p"); done < <(bdd_list testPatterns)
   while IFS= read -r p; do [ -n "$p" ] && LINT_PATTERNS+=("$p"); done < <(bdd_list lintPatterns)
 }
 
@@ -65,8 +66,53 @@ bdd_features_dirty() {
     p=${p#\"}
     p=${p%\"}
     bdd_is_feature "$p" && return 0
-  done < <(cd "$(bdd_root)" && git status --porcelain -uall 2>/dev/null)
+  done < <(cd "$(bdd_root)" && git -c core.quotePath=false status --porcelain -uall 2>/dev/null)
   return 1
+}
+
+# The Gherkin tools (gherkin/features.mjs, Node), installed beside these scripts.
+bdd_gherkin() { echo "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gherkin"; }
+bdd_gherkin_ready() {
+  command -v node >/dev/null 2>&1 && [ -d "$(bdd_gherkin)/node_modules/@cucumber/gherkin" ]
+}
+bdd_gherkin_missing() {
+  echo "bdd-gates needs Node 18+ and its Gherkin tools: re-run the skill's scripts/install.sh," \
+    "or: npm ci --prefix .claude/bdd-gates/gherkin" >&2
+}
+
+# Feature files that differ from HEAD: "worktree" (staged, unstaged, untracked or deleted) or "staged".
+bdd_changed_features() {
+  local p line
+  if [ "$1" = staged ]; then
+    while IFS= read -r p; do
+      bdd_is_feature "$p" && echo "$p"
+    done < <(cd "$(bdd_root)" && git -c core.quotePath=false diff --cached --name-only --no-renames 2>/dev/null)
+  else
+    while IFS= read -r line; do
+      p=${line:3}
+      p=${p##* -> }
+      p=${p#\"}
+      p=${p%\"}
+      bdd_is_feature "$p" && echo "$p"
+    done < <(cd "$(bdd_root)" && git -c core.quotePath=false status --porcelain -uall --no-renames 2>/dev/null)
+  fi
+}
+
+# What changed in the scenarios against HEAD ("worktree" or "staged"), as features.mjs prints it (JSON).
+bdd_feature_changes() {
+  local paths=() p
+  while IFS= read -r p; do [ -n "$p" ] && paths+=("$p"); done < <(bdd_changed_features "$1")
+  (cd "$(bdd_root)" && node --no-warnings "$(bdd_gherkin)/features.mjs" changes --source "$1" -- \
+    ${paths[@]+"${paths[@]}"})
+}
+
+# The number of scenarios (Cucumber pickles) added, or with their steps changed, in features.mjs's JSON.
+bdd_scenarios_touched() { jq '(.added | length) + (.changed | length)' <<<"$1"; }
+
+# Lints feature files with gplint and bdd-gates' rules; prints the findings, false when any fails.
+bdd_lint_features() {
+  [ $# -gt 0 ] || return 0
+  (cd "$(bdd_root)" && node --no-warnings "$(bdd_gherkin)/features.mjs" lint -- "$@")
 }
 
 bdd_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -81,3 +127,22 @@ bdd_append() {
 
 # Reads the file path from a hook's JSON payload on stdin.
 bdd_hook_file_path() { jq -r '.tool_input.file_path // empty'; }
+
+# Refactor mode (scripts/refactor-mode): the author lets one commit change
+# production code with no feature change, on the terms .githooks/pre-commit
+# checks. Its file is inside the git directory, never in the working tree.
+bdd_refactor_file() { echo "$(cd "$(bdd_root)" && git rev-parse --absolute-git-dir)/bdd-refactor"; }
+bdd_refactor_present() { [ -f "$(bdd_refactor_file)" ]; }
+bdd_refactor_field() { sed -n "s/^$1=//p" "$(bdd_refactor_file)"; }
+
+# True when refactor mode is on for the current HEAD, the commit it was switched on for.
+bdd_refactor_on() {
+  bdd_refactor_present && [ "$(bdd_refactor_field head)" = "$(cd "$(bdd_root)" && git rev-parse HEAD)" ]
+}
+
+# True for a test file or a test fixture (testPatterns), or a feature file,
+# which a refactor must leave as it is.
+bdd_is_test() {
+  _bdd_any "$1" ${TEST_PATTERNS[@]+"${TEST_PATTERNS[@]}"} && return 0
+  bdd_is_feature "$1"
+}

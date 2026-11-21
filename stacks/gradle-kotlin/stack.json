@@ -1,25 +1,47 @@
 {
   "name": "gradle-kotlin",
-  "description": "Kotlin on Gradle (Kotlin DSL): Cucumber-JVM on the JUnit Platform, Detekt, Konsist.",
+  "description": "Kotlin on Gradle (Kotlin DSL), one build or many: Cucumber-JVM on the JUnit Platform, Detekt with ktlint's rules, Kover, CPD and Konsist, from one convention plugin.",
   "rawCommandSample": "",
-  "excludedSample": "",
+  "excludedSample": "build-logic/src/main/kotlin/Probe.kt",
   "config": {
     "stack": "gradle-kotlin",
     "prodPatterns": [
-      "src/main/kotlin/*.kt"
+      "src/main/kotlin/*.kt",
+      "*/src/main/kotlin/*.kt",
+      "src/main/java/*.java",
+      "*/src/main/java/*.java"
     ],
-    "prodExcludePatterns": [],
+    "prodExcludePatterns": [
+      "build-logic/*",
+      "*/build/*"
+    ],
     "featurePatterns": [
-      "src/test/resources/features/*.feature"
+      "src/test/resources/features/*.feature",
+      "*/src/test/resources/features/*.feature"
+    ],
+    "testPatterns": [
+      "src/test/*",
+      "*/src/test/*",
+      "src/testFixtures/*",
+      "*/src/testFixtures/*"
     ],
     "lintPatterns": [
       "*.kt",
       "*.kts"
     ],
-    "lintCommand": "./gradlew detekt --console=plain -q",
-    "checkCommand": "./gradlew check --console=plain",
-    "bddCommand": "./gradlew test --console=plain",
+    "lintCommand": "scripts/gradle-builds.sh detekt",
+    "checkCommand": "scripts/gradle-builds.sh check",
+    "bddCommand": "scripts/gradle-builds.sh test",
     "bddLogging": "native",
-    "bddRawCommandRegex": ""
-  }
+    "scenarioResults": true,
+    "bddRawCommandRegex": "",
+    "protectedFiles": [
+      "detekt.yml",
+      "detekt-baseline.xml",
+      "build-logic",
+      "gradle-builds.sh",
+      "ArchitectureBoundaryTest.kt"
+    ]
+  },
+  "protectedSample": "detekt.yml"
 }

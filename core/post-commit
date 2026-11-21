@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Refactor mode lasts one commit: after any commit, it is switched off.
+root=$(git rev-parse --show-toplevel)
+export BDD_GATES_ROOT=$root
+. "$root/.claude/bdd-gates/lib.sh"
+
+if bdd_refactor_present; then
+  rm -f "$(bdd_refactor_file)"
+  bdd_append "REFACTOR_OFF commit=$(git rev-parse HEAD)"
+fi
+exit 0

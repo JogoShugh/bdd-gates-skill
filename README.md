@@ -11,36 +11,210 @@ exits 2 cannot be reasoned past.
 This folder is a Claude Code skill. Claude reads `SKILL.md` to install the
 gates and to work inside them. This README is for the people who own the repo.
 
+## How it works
+
+Three kinds of process do the checking, and none of them is Claude:
+
+- **Claude Code hooks** run around Claude's own tool calls. Before any tool
+  call, `protect-gate.sh` keeps Claude out of the gate itself. Before an edit,
+  `gherkin-first.sh` refuses production code until the feature files add or
+  change a scenario against HEAD. It reads the Gherkin, not the log: whether
+  the scenario was seen red is the commit hook's question. After an edit,
+  `log-event.sh` writes the fact to the event log and `lint.sh` lints what
+  changed: gplint for a `.feature`, the stack's linter (detekt) for code. The
+  edit has already happened by then, so a lint failure is reported back to
+  Claude to fix, and enforced for real at commit. When Claude tries to stop,
+  `check.sh` runs the full check and sends it back to work if anything fails.
+  The full check runs the tests too, so Claude cannot end a turn while a
+  scenario is red, and each Stop logs one more run.
+- **The build** records each test run. On the gradle-kotlin stack that is the
+  `bddgates.bdd-log` plugin: every Test task writes Cucumber's message stream,
+  and `record-run.sh` turns it into one status per scenario and a `BDD_RUN`
+  line in the event log, pass or fail. An up-to-date Test task ran nothing and
+  is not recorded, nor is a `--tests` run that left the features out.
+- **The git pre-commit hook** runs on every commit, from any tool or terminal,
+  reads that log and those results, and refuses a commit whose scenarios did
+  not go red before the production code and green after it. Only Claude's
+  Edit, Write and MultiEdit are logged as writes, so a staged production file
+  with no `MAIN_WRITE` was edited outside them (a terminal, an IDE) and the
+  commit is refused: its order cannot be seen. Refactor mode is the way to
+  commit such a change.
+
+So a change goes like this. Claude writes or changes a scenario; the lint
+checks it. Now the hook lets Claude touch production code, but the skill tells
+Claude to run the tests first, see them fail on the new behaviour, and the
+build logs that. Claude writes the code, runs the tests again until the same
+scenarios pass, and the Stop hook runs the full check (complexity, coverage,
+duplication, architecture). At commit, the git hook checks the order in the
+log: a scenario change, a red run before the first production write, and
+green after the last. Skip the red run and the commit is refused.
+
+Shown for the gradle-kotlin stack. Blue is Claude acting, amber a Claude Code
+hook, green Gradle, purple the git hook, red a block.
+
+```mermaid
+flowchart TD
+  classDef claude fill:#e8f0ff,stroke:#3b6fd8,color:#14233f
+  classDef hook fill:#fff4dd,stroke:#c98a12,color:#3a2a05
+  classDef gradle fill:#e9f7ee,stroke:#2f9a5a,color:#0f2e1b
+  classDef git fill:#f1ecfb,stroke:#7a55c7,color:#22153f
+  classDef block fill:#fde8e8,stroke:#c94040,color:#3d0e0e
+
+  A["CLAUDE · edits a .feature<br/>Edit / Write"]:::claude
+  A --> PT(["CLAUDE HOOK · PreToolUse, every tool<br/>protect-gate.sh: gate scripts, config, settings,<br/>git hooks, event log, --no-verify, and protectedFiles<br/>(detekt.yml, baseline, build-logic, gradle-builds.sh, arch test)"]):::hook
+  PT -- "touched" --> X0["blocked: author's files"]:::block
+  PT -- "clear" --> L(["CLAUDE HOOK · PostToolUse, Edit/Write/MultiEdit<br/>log-event.sh: FEATURE_WRITE<br/>lint.sh: gplint, 15 rules, e.g. scenario-has-then,<br/>no-same-shape-scenarios"]):::hook
+  L -- "fails" --> X1["reported to Claude to fix<br/>(the edit stands; enforced at commit)"]:::hook
+  L -- "passes" --> R["CLAUDE · runs red build<br/>scripts/gradle-builds.sh test"]:::claude
+
+  subgraph GR["GRADLE · bdd-log"]
+    M["each Test task writes<br/>build/cucumber/*.ndjson"]:::gradle --> RR["record-run.sh<br/>+ features.mjs results"]:::gradle
+    RR --> J[".claude/bdd-runs/*.json<br/>+ BDD_RUN line in the log"]:::gradle
+  end
+  R --> M
+
+  J -->|"then, by the skill's rule"| W["CLAUDE · edits src/main/kotlin"]:::claude
+  W --> P(["CLAUDE HOOK · PreToolUse, Edit/Write/MultiEdit<br/>gherkin-first.sh: do the .feature files<br/>add or change a scenario vs HEAD?<br/>(always yes in refactor mode)"]):::hook
+  P -- "no" --> X2["write blocked"]:::block
+  P -- "yes" --> LK(["CLAUDE HOOK · PostToolUse<br/>log-event.sh: MAIN_WRITE<br/>lint.sh: detekt, reported to Claude"]):::hook
+  LK --> G["CLAUDE · runs green build<br/>same scenarios must PASS"]:::claude
+  G --> M
+  J -.->|"read at commit"| C
+
+  G --> S(["CLAUDE HOOK · Stop, every time Claude stops<br/>check.sh runs GRADLE check: the tests (logged),<br/>detekt, Kover 80%, CPD, architecture test"]):::hook
+  S -- "fails, e.g. a scenario still red" --> X4["Claude can't stop until fixed"]:::block
+  S -.->|"logs a run"| M
+  S -- "passes" --> C(["GIT HOOK · .githooks/pre-commit<br/>staged scenario change, lint passes,<br/>red run before the first MAIN_WRITE,<br/>touched scenarios green after the last"]):::git
+  C -- "fails" --> X5["commit refused"]:::block
+  C -- "passes" --> D(["committed ✓"]):::git
+```
+
+Not drawn: `gate-bash.sh` (before a shell command, blocks a raw test command
+that would skip the log; idle on gradle-kotlin, where the build logs every
+run itself) and `refactor-prompt.sh` (on each prompt, lets the
+author switch refactor mode with `refactor-mode on "why"`, `off` or `status`).
+
+### One red-green cycle, in order
+
+The same cycle as a conversation between the parts. Claude only ever talks to
+its tools; the hooks, the build and git do the checking.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as Claude
+  participant H as Claude Code hooks
+  participant B as Build (Gradle + bdd-log)
+  participant L as Event log + bdd-runs
+  participant G as git pre-commit
+
+  C->>H: Edit checkout.feature
+  H->>H: PreToolUse protect-gate.sh: not a gate file
+  H->>L: PostToolUse log-event.sh: FEATURE_WRITE
+  H-->>C: PostToolUse lint.sh: gplint findings, if any
+  C->>B: scripts/gradle-builds.sh test
+  B->>L: BDD_RUN FAIL + one status per scenario
+  C->>H: Edit Checkout.kt
+  H->>H: PreToolUse gherkin-first.sh: a scenario changed vs HEAD
+  H-->>C: allowed
+  H->>L: PostToolUse log-event.sh: MAIN_WRITE
+  H-->>C: PostToolUse lint.sh: detekt findings, if any
+  C->>B: scripts/gradle-builds.sh test
+  B->>L: BDD_RUN PASS, same scenarios PASSED
+  C->>H: tries to stop
+  H->>B: Stop check.sh: gradle-builds.sh check
+  B->>L: BDD_RUN PASS (check runs the tests too)
+  B-->>H: tests, detekt, Kover, CPD, architecture test pass
+  H-->>C: may stop
+  C->>G: git commit
+  G->>G: staged features: a scenario changed, gplint passes
+  G->>L: reads the order and the results
+  L-->>G: feature, red before main, green after
+  G-->>C: commit accepted
+```
+
+### What the commit check expects of the log
+
+The pre-commit reads the event log since the last commit as a little state
+machine. A commit of production code is accepted only from `Green`, and only
+if the staged feature files add or change a scenario and pass the feature lint.
+A commit with no production code in it is not checked. The diagram is the
+intended order; the hook checks less strictly than it reads. The feature write
+and the red run each have to come before the first `MAIN_WRITE`, but not one
+after the other, and the red line and the failing touched scenario may come
+from different runs. "Green" means a run after the last `MAIN_WRITE`, and in
+it every module's latest run passed. If HEAD moves while refactor mode
+is on, every production commit is refused until the author switches it off;
+any commit switches it off.
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> Clean
+  Clean --> FeatureChanged: FEATURE_WRITE
+  FeatureChanged --> Red: BDD_RUN FAIL<br/>on behaviour, touched scenario failed
+  FeatureChanged --> FeatureChanged: BDD_RUN FAIL reason=compile<br/>or reason=no-results (does not count)
+  Red --> Coding: MAIN_WRITE
+  Coding --> Coding: MAIN_WRITE, BDD_RUN FAIL
+  Coding --> Green: BDD_RUN PASS<br/>touched scenarios PASSED
+  Green --> Coding: another MAIN_WRITE,<br/>or a BDD_RUN FAIL
+  Green --> [*]: git commit accepted
+
+  Clean --> Refactor: author runs refactor-mode on
+  Refactor --> RefactorGreen: BDD_RUN PASS before the first MAIN_WRITE
+  RefactorGreen --> RefactorGreen: MAIN_WRITE, BDD_RUN
+  RefactorGreen --> [*]: commit, last run PASS after the last MAIN_WRITE,<br/>no feature or test changed,<br/>then the mode switches off
+```
+
 ## What it enforces
 
 | Gate | When it runs | What it does |
 |---|---|---|
-| Gherkin first | Before Claude edits or writes a file | Blocks a production-code write unless a `.feature` file is staged, unstaged, or untracked |
+| Gherkin first | Before Claude edits or writes a file | Blocks a production-code write unless a scenario has been added, or had its steps changed, against HEAD. Comments, tags, descriptions and blank lines do not count |
 | Event log | After Claude edits or writes a file | Appends `FEATURE_WRITE` / `MAIN_WRITE` to `.claude/tdd-events.log` |
 | Lint | After Claude edits a lintable file | Runs the stack's complexity linter and reports violations back to Claude |
-| Logged test runs | Every BDD run | Appends `BDD_RUN PASS` or `BDD_RUN FAIL`, including runs that fail |
+| Feature lint | After Claude edits a `.feature` file, and at commit | gplint with bdd-gates' rules: no empty or unnamed scenarios, every scenario has a `Then`, outlines have examples, and two scenarios that differ only in their values are one Scenario Outline |
+| Logged test runs | Every BDD run | Appends `BDD_RUN PASS` or `BDD_RUN FAIL`, including runs that fail, with each scenario's own result |
 | Raw test command | Before Claude runs a shell command | On wrapper-logged stacks, blocks a raw test command that would skip the log |
 | Green to stop | When Claude tries to end its turn | Runs the full check; Claude keeps working until it passes |
-| TDD ordering | `git commit`, from any tool or terminal | Rejects a commit of production code unless the log shows a feature write, then a failing BDD run, before the first production write, and a passing final run |
+| TDD ordering | `git commit`, from any tool or terminal | Rejects a commit of production code unless it adds or changes a scenario, and the log shows a feature write, then a BDD run that failed on behaviour (a compile failure does not count), before the first production write, and a run after the last production write in which every module's latest run passed. Every staged production file must have been written through Claude's tools (a `MAIN_WRITE`), or its order cannot be seen |
+| Scenario by scenario | `git commit`, on stacks that record each scenario | Also rejects it unless one of the scenarios it adds or changes failed before the first production write (an older scenario failing does not count), and all of them pass after the last |
+| Refactor mode | `git commit`, after the author switches it on | Lets one commit change production code with no feature change, if no test or feature file changed, the suite passed before the first production write, and the last run passed after the last one |
+| Gate protection | Before every Claude tool call | Blocks Claude from switching refactor mode on, changing the gate's scripts, config, git hooks, settings, event log or run results, and skipping hooks |
 
 The event log is plain text, one fact per line, and gitignored:
 
 ```
 2026-09-28T17:40:11Z FEATURE_WRITE src/test/resources/features/checkout.feature
-2026-09-28T17:40:52Z BDD_RUN FAIL total=12 failures=1 errors=0
+2026-09-28T17:40:52Z BDD_RUN FAIL module=shop total=12 failures=1 errors=0 results=.claude/bdd-runs/20260928T174052Z-1.json
 2026-09-28T17:41:30Z MAIN_WRITE src/main/kotlin/shop/Checkout.kt
-2026-09-28T17:42:05Z BDD_RUN PASS total=12 failures=0 errors=0
+2026-09-28T17:42:05Z BDD_RUN PASS module=shop total=12 failures=0 errors=0 results=.claude/bdd-runs/20260928T174205Z-1.json
 ```
+
+### What counts as a real scenario change
+
+The gates read the Gherkin the way Cucumber does, with its own parser
+(`@cucumber/gherkin`), and compare Cucumber's *pickles*: one per Scenario,
+one per Examples row of a Scenario Outline, Background steps included. A
+pickle is known by its file, its scenario's name and its Examples row; it
+changed when its steps changed. Adding a scenario or an Examples row, or
+changing a step, is a change. A comment, a tag, a description, blank lines or
+reordering is not.
+
+Each run's `results=` file holds one status per scenario, taken from
+Cucumber's message stream (its `message` plugin). That is how the pre-commit
+knows which scenario was red and which is green, not just whether the run was.
 
 ## Quick start
 
-Requirements: `bash` (3.2 or later, so stock macOS works), `git`, `jq`.
+Requirements: `bash` (3.2 or later, so stock macOS works), `git`, `jq`, and
+Node 18+ with `npm`, in every stack: the Gherkin tools run on Node.
 
 ```bash
 SKILL=path/to/bdd-gates
 
 # 1. Install the language-agnostic core for your stack.
-$SKILL/scripts/install.sh gradle-kotlin /path/to/repo     # or dotnet-csharp
+$SKILL/scripts/install.sh gradle-kotlin /path/to/repo     # or dotnet-csharp or node-typescript
 
 # 2. Check the file patterns in /path/to/repo/.claude/bdd-gates.json.
 
@@ -59,13 +233,67 @@ and shows you the build changes before it makes them.
 
 ### What the installer changes in the target repo
 
+```mermaid
+flowchart LR
+  classDef src fill:#eef0f4,stroke:#8a8f9c,color:#1f2430
+  classDef claude fill:#fff4dd,stroke:#c98a12,color:#3a2a05
+  classDef git fill:#f1ecfb,stroke:#7a55c7,color:#22153f
+  classDef local fill:#fde8e8,stroke:#c94040,color:#3d0e0e
+
+  subgraph SK["bdd-gates skill"]
+    core["core/*.sh"]:::src
+    gh["core/gherkin/"]:::src
+    hj["core/hooks.json"]:::src
+    gh2["core/pre-commit, commit-msg,<br/>post-commit, refactor-mode"]:::src
+    st["stacks/&lt;stack&gt;/stack.json"]:::src
+    tp["stacks/&lt;stack&gt;/templates"]:::src
+  end
+
+  YOU(["you, by hand:<br/>stacks/&lt;stack&gt;/SETUP.md,<br/>git config core.hooksPath .githooks,<br/>then scripts/verify-install.sh"])
+  tp --> YOU
+  YOU --> bl["target repo, committed:<br/>build-logic/, scripts/gradle-builds.sh,<br/>ArchitectureBoundaryTest.kt, and per build:<br/>includeBuild, the two plugin ids,<br/>Cucumber message plugin, Konsist"]:::src
+
+  I(["scripts/install.sh &lt;stack&gt; &lt;repo&gt;"])
+
+  subgraph RP["target repo, committed"]
+    s1[".claude/bdd-gates/*.sh"]:::claude
+    s2[".claude/bdd-gates/gherkin/"]:::claude
+    s3[".claude/bdd-gates.json"]:::claude
+    s4[".claude/settings.json hooks"]:::claude
+    s5[".githooks/pre-commit, commit-msg,<br/>post-commit"]:::git
+    s6["scripts/refactor-mode"]:::git
+  end
+
+  subgraph LO["target repo, gitignored"]
+    n1["gherkin/node_modules (npm ci)"]:::local
+    n2[".claude/tdd-events.log"]:::local
+    n3[".claude/bdd-runs/"]:::local
+  end
+
+  core --> I
+  gh --> I
+  hj --> I
+  gh2 --> I
+  st -- "only if no config yet" --> I
+  I --> s1 & s2 & s3 & s4 & s5 & s6
+  I --> n1
+  I -. "adds to .gitignore" .-> n2 & n3
+```
+
 | Path | Change |
 |---|---|
 | `.claude/bdd-gates/*.sh` | Core scripts, copied in and committed, so every teammate gets the same gates |
+| `.claude/bdd-gates/gherkin/` | The Gherkin tools (scenario changes, run results, feature lint), with their lockfile; `npm ci` installs their `node_modules`, which stay out of git |
 | `.claude/bdd-gates.json` | Per-repo config, created from the stack defaults; kept if it already exists |
 | `.claude/settings.json` | Hook entries merged in; hooks the installer did not write are left alone |
-| `.githooks/pre-commit` | Ordering check; an unrelated existing hook is kept, and ours goes to `pre-commit.bdd-gates` |
-| `.gitignore` | Adds `.claude/tdd-events.log` |
+| `.githooks/pre-commit` | Ordering check, and the refactor check when refactor mode is on |
+| `.githooks/commit-msg` | Adds the `Refactor-Mode:` trailer in refactor mode; refuses it on any other commit |
+| `.githooks/post-commit` | Switches refactor mode off after any commit |
+| `scripts/refactor-mode` | The author's switch for refactor mode |
+| `.gitignore` | Adds `.claude/tdd-events.log` and `.claude/bdd-runs/` |
+
+An existing git hook or `scripts/refactor-mode` that the installer did not
+write is kept, and ours goes beside it as `<name>.bdd-gates` to merge by hand.
 
 Re-running the installer is safe. It refreshes the scripts and replaces its
 own hook entries without duplicating them.
@@ -80,12 +308,16 @@ scripts are identical in every repo.
 | `prodPatterns` | Production source files. Shell globs on repo-relative paths; `*` also crosses folders |
 | `prodExcludePatterns` | Paths that match `prodPatterns` but are not production: tests, step definitions, generated code, build output |
 | `featurePatterns` | Gherkin feature files |
+| `testPatterns` | Test code and test fixtures. A refactor commit may not change these, nor feature files |
 | `lintPatterns` | Files whose edit re-runs the linter |
 | `lintCommand` | Fast complexity check; non-zero exit means a violation |
 | `checkCommand` | Full check for the Stop gate: tests, BDD, lint, architecture |
 | `bddCommand` | The raw BDD test command |
 | `bddLogging` | `native`: the build logs each run itself. `wrapper`: runs go through `.claude/bdd-gates/bdd-run.sh` |
 | `bddRawCommandRegex` | Wrapper stacks only: the raw test command Claude may not run directly |
+| `bddMessages` | Wrapper stacks only: where the runner writes Cucumber's message stream |
+| `scenarioResults` | `true` when the stack records each scenario's result: the pre-commit then judges scenario by scenario |
+| `protectedFiles` | File names of the quality settings, which Claude may read and not change |
 
 Example for a multi-module Gradle build:
 
@@ -99,14 +331,21 @@ Wrong patterns do not fail loudly; the gate just never matches. Run
 
 ## Stacks
 
-| Stack | BDD runner | Run logging | Complexity | Architecture |
-|---|---|---|---|---|
-| `gradle-kotlin` | Cucumber-JVM (JUnit Platform) | native, Gradle `finalizedBy` | Detekt | Konsist |
-| `dotnet-csharp` | Reqnroll (xUnit or NUnit) | wrapper, `bdd-run.sh` | Roslyn CA1502 + SonarAnalyzer | Project references + NetArchTest |
+| Stack | BDD runner | Run logging | Complexity | Architecture | Scenario by scenario |
+|---|---|---|---|---|---|
+| `gradle-kotlin` | Cucumber-JVM (JUnit Platform) | native, the `bddgates.bdd-log` convention plugin | Detekt with ktlint's rules, typed Detekt at Stop, Kover floor, CPD | Konsist, and no `@Suppress` but the team's list | yes |
+| `dotnet-csharp` | Reqnroll (xUnit or NUnit) | wrapper, `bdd-run.sh` | Roslyn CA1502 + SonarAnalyzer | Project references + NetArchTest | not yet |
+| `node-typescript` | cucumber-js | wrapper, `bdd-run.sh` | ESLint (core, SonarJS, type-aware typescript-eslint) + `tsc`, Knip, c8 | dependency-cruiser | yes |
 
 Each stack folder holds `stack.json` (config defaults), `SETUP.md` (build
 changes), and `templates/`. Thresholds are always each tool's own defaults,
-never invented numbers.
+never invented numbers. The one policy number is Kotlin's coverage floor,
+80 %, to agree with the team.
+
+`gradle-kotlin` puts every quality setting in one convention-plugin build,
+`build-logic/`, that each Gradle build includes; `scripts/gradle-builds.sh`
+runs the lint, check and test tasks in every build of the repo, so a build
+added later is gated with no config change.
 
 On wrapper stacks, run tests through the wrapper so the result is logged:
 
@@ -130,11 +369,54 @@ The template README lists candidate tools for TypeScript, Python, and Go.
 
 ## Day-to-day loop
 
-1. Write or change a `.feature` scenario.
-2. Run the BDD suite and watch it fail for the right reason.
+1. Add a scenario, or change a scenario's steps or Examples.
+2. Run the BDD suite and watch that scenario fail: an undefined step counts, a compile error does not. In a
+   compiled language, run before writing new step definitions, so the run compiles.
 3. Write step definitions and production code. The gate now allows it.
 4. Run the suite until it passes. Fix lint findings as they appear.
-5. Commit. The pre-commit check confirms the sequence.
+5. Commit. The pre-commit check confirms the sequence, scenario by scenario.
+
+## Refactor mode
+
+A refactor changes the structure of production code, not its behavior. It has
+no new scenario, so it cannot be seen red first. For that case, you (never
+Claude) switch on refactor mode for one commit. Send one of these as a whole
+prompt, from any Claude Code client, remote control included:
+
+```
+refactor-mode on "extract the pricing rules from Checkout"
+refactor-mode status
+refactor-mode off
+```
+
+A `UserPromptSubmit` hook (`refactor-prompt.sh`) runs `scripts/refactor-mode`
+with those arguments, and Claude reports its output. Only a whole prompt in
+exactly this form counts; a sentence that mentions the mode switches nothing.
+In a terminal, `scripts/refactor-mode on "why"` works too.
+
+The mode starts from a clean working tree and is bound to the current HEAD.
+While it is on, Claude may write production code with no feature change, and
+the pre-commit check accepts the commit only if:
+
+- no feature file and no test file (`testPatterns`) differs from HEAD, staged,
+  unstaged, or untracked;
+- a BDD run passed after the mode was switched on, before the first
+  production write;
+- the last BDD run passed, after the last production write.
+
+Green, change, green. The commit gets a `Refactor-Mode: <why>` trailer, so
+`git log --grep Refactor-Mode` lists every refactor. The trailer is refused on
+any other commit. The mode ends with the next commit, and is void if HEAD
+moves first.
+
+The state file lives in the git directory, not the working tree. A
+`PreToolUse` hook (`protect-gate.sh`) runs before every tool. It blocks Claude
+from running the switch, from touching the gate's scripts, config, git hooks,
+Claude Code settings or event log, and from `--no-verify` or `git commit -n`.
+Any other tool call whose input names the gate or the mode is blocked too
+(scheduling, messaging, agents, MCP), so Claude cannot send the switch prompt
+by another route. Claude may still read these files, run
+`.githooks/pre-commit`, and run `bdd-run.sh`.
 
 ## Testing the skill
 
@@ -144,9 +426,21 @@ scripts/selftest.sh
 
 No mocks. For every stack folder, the selftest installs into a real
 throwaway git repo and runs the real scripts end to end. It checks blocking,
-logging, the pre-commit ordering rules, the lint and Stop gates, the raw
-command gate, and `verify-install.sh`. New stack folders are picked up
+logging, the pre-commit ordering rules, refactor mode through the real git
+hooks, gate protection, the lint and Stop gates, the raw command gate, the
+feature lint, scenario changes, scenario-by-scenario results, and
+`verify-install.sh`. New stack folders are picked up
 automatically.
+
+```bash
+scripts/e2e-gradle-kotlin.sh
+```
+
+The Kotlin stack for real: two Gradle builds sharing `build-logic`, real
+Cucumber-JVM, the installed hooks and pre-commit. It walks one red-green
+cycle scenario by scenario, and checks that a commit is refused when its run
+was red only on an older scenario. Needs a JDK 21 and the network the first
+time.
 
 ## Sharing
 
@@ -165,11 +459,25 @@ repo keeps working even for teammates who do not have the skill.
 
 ## Known limits and tradeoffs
 
-- **Refactors are blocked too.** A pure refactor with no new behavior still
-  needs a feature change in flight. This is deliberate: a slightly annoying
-  gate beats a rule that drifts silently.
-- **Ordering is per commit, not per scenario.** The check catches skipped
-  Gherkin. It does not prove every file was test-driven on its own.
+- **Refactors need the author.** Only you can switch on refactor mode, one
+  commit at a time. Claude cannot open it for itself.
+- **A prompt does not say where it came from.** If another Claude session can
+  deliver a message into this session as a prompt, it could switch refactor
+  mode. Claude in this session cannot, because of `protect-gate.sh`.
+- **Gate protection is a pattern match.** `protect-gate.sh` matches paths and
+  words in Claude's commands. It stops drift, not a determined attempt to
+  hide a path, so review commits to the gate files as usual.
+- **Scenarios, not files.** The scenario-by-scenario check proves a changed
+  scenario was red before the code and green after. It does not prove every
+  production file was driven by it. On `dotnet-csharp` it is not on yet, so
+  that stack still checks run by run.
+- **Outlines in disguise: exact only.** Two scenarios are flagged only when
+  their steps match exactly once values are set aside. Near-duplicates are
+  left to the author and to review.
+- **Hollow steps pass.** A `Then` step with no assertion turns green and
+  proves nothing; the gates do not look inside step definitions yet.
+- **Node everywhere.** Every stack, Kotlin and .NET included, needs Node 18+
+  for the Gherkin tools.
 - **The commit window starts after the last commit's second.** Events
   logged in the same second as the previous commit are not counted. This
   errs toward rejecting a commit, never toward passing one.
@@ -196,13 +504,16 @@ and `.claude/bdd-gates.json` as you would a CI pipeline change.
 bdd-gates/
 ├── SKILL.md                 instructions Claude loads
 ├── README.md                this file
-├── core/                    language-agnostic hook scripts, pre-commit, hooks.json
+├── core/                    language-agnostic hook scripts, git hooks, refactor-mode, hooks.json
+│   └── gherkin/             features.mjs (scenario changes, run results, verdict, lint), gplint rules, lockfile
 ├── scripts/
 │   ├── install.sh           install the core into a repo
 │   ├── verify-install.sh    live block-then-allow proof in a repo
-│   └── selftest.sh          end-to-end tests against temp git repos
+│   ├── selftest.sh          end-to-end tests against temp git repos
+│   └── e2e-gradle-kotlin.sh the Kotlin stack with real Gradle and Cucumber
 └── stacks/
     ├── _template/           how to add a language
     ├── gradle-kotlin/
+    ├── node-typescript/
     └── dotnet-csharp/
 ```

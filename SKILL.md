@@ -14,16 +14,28 @@ replaces the hooks**: if a gate blocks you, satisfy it; never edit it away.
 
 | Gate | Mechanism | Blocks |
 |---|---|---|
-| Gherkin first | `PreToolUse` Edit/Write → `gherkin-first.sh` | Production write while no feature file is staged, unstaged, or untracked |
+| Gherkin first | `PreToolUse` Edit/Write → `gherkin-first.sh` | Production write while no scenario has been added or had its steps changed against HEAD (comments, tags, descriptions and blank lines do not count) |
 | Event log | `PostToolUse` → `log-event.sh` | Nothing; appends `FEATURE_WRITE` / `MAIN_WRITE` to `.claude/tdd-events.log` |
 | Fast lint | `PostToolUse` → `lint.sh` | Reports complexity violations right after the edit (exit 2) |
+| Feature lint | `PostToolUse` → `lint.sh`, and `pre-commit` | A feature file with no scenario, an unnamed or duplicate scenario, a scenario with no `Then`, an outline with no examples, two scenarios whose steps differ only in values (one Scenario Outline) (gplint) |
 | Logged BDD runs | stack-native hook, or `bdd-run.sh` wrapper + `gate-bash.sh` | Raw test command that would leave no `BDD_RUN` fact (wrapper stacks only) |
 | Green to stop | `Stop` → `check.sh` | Ending the turn while tests, BDD, lint, or architecture checks fail |
-| Ordering | `.githooks/pre-commit` | Commit of production code without feature write, red BDD run before the first prod write, and a green final run |
+| Ordering | `.githooks/pre-commit` | Commit of production code without a staged scenario change, a feature write and a BDD run that failed on behaviour (not `reason=compile`) before the first prod write, and a green final run |
+| Scenario by scenario | `record-run.sh` + `pre-commit` (`scenarioResults`) | Commit where none of the scenarios it adds or changes failed before the first prod write (an older scenario failing does not count), or one of them is not green after the last |
+| Refactor mode | prompt `refactor-mode on "why"` → `refactor-prompt.sh`, switched on by the user only; `pre-commit`, `commit-msg`, `post-commit` | One commit of production code with no feature change, unless tests and features are unchanged and the suite is green before and after |
+| Gate protection | `PreToolUse` every tool → `protect-gate.sh` | Switching refactor mode on; editing gate scripts, config, git hooks, settings, or the event log; `--no-verify`; any other tool call naming the gate or the mode |
+
+What a scenario change is: the core reads the Gherkin the way Cucumber does
+(`@cucumber/gherkin`, in `core/gherkin/`) and compares Cucumber's pickles,
+one per Scenario and one per Examples row, Background steps included, at HEAD
+and now. A pickle is known by its file, scenario name and Examples row; it
+changed when its steps did. So the gates need **Node 18+** in every stack;
+`install.sh` runs `npm ci` for them from a lockfile.
 
 Layout:
 ```
 core/      language-agnostic scripts, identical for every stack
+core/gherkin/  features.mjs (scenario changes, feature lint), gplint rules and config, lockfile
 stacks/    one folder per language: stack.json (config defaults), SETUP.md, templates/
 stacks/_template/  how to add a language
 scripts/   install.sh, verify-install.sh, selftest.sh
@@ -32,14 +44,18 @@ scripts/   install.sh, verify-install.sh, selftest.sh
 ## Install into a repo
 
 1. Detect the stack from build files (`build.gradle.kts` → `gradle-kotlin`,
-   `*.sln`/`*.csproj` → `dotnet-csharp`). If no folder under `stacks/` fits,
+   `*.sln`/`*.csproj` → `dotnet-csharp`, `tsconfig.json` → `node-typescript`). If no
+   folder under `stacks/` fits,
    go to "Add a stack" first.
 2. Run `scripts/install.sh <stack> <repo>`. It copies `core/` to
    `<repo>/.claude/bdd-gates/`, writes `.claude/bdd-gates.json`, merges hooks
-   into `.claude/settings.json`, installs `.githooks/pre-commit`, and
-   gitignores the event log. Re-running is safe.
-3. Open `.claude/bdd-gates.json` and check the patterns against the repo's
-   real folders. Wrong patterns make the gate silently useless.
+   into `.claude/settings.json`, installs `.githooks/pre-commit`, `commit-msg`
+   and `post-commit` and `scripts/refactor-mode`, and gitignores the event
+   log. Re-running is safe.
+3. Check the patterns in `.claude/bdd-gates.json`, `testPatterns` included,
+   against the repo's real folders. Wrong patterns make the gate silently
+   useless. Once the hooks are live, `protect-gate.sh` blocks you from
+   editing this file; show the user the change to make.
 4. Follow `stacks/<stack>/SETUP.md` for the build side: BDD runner with strict
    undefined steps, BDD run logging, complexity linter at its own defaults,
    architecture test. These edits change the build, so show them to the user.
@@ -64,10 +80,21 @@ remove the old entries so gates do not run twice.
 4. Run the suite until `BDD_RUN PASS`. Fix lint findings as they appear.
 5. End the turn. The Stop gate runs the full check.
 
-A pure refactor with no new behavior is still blocked by the Gherkin-first
-gate. That is a deliberate tradeoff. Tell the user, and touch the feature
-that covers the refactored behavior (for example, a clearer scenario name).
-Never add a no-op change only to open the gate.
+A pure refactor with no new behavior has no scenario to see red. For that,
+the user switches on refactor mode for one commit, by sending the whole
+prompt `refactor-mode on "why"`. You never switch it on, and never schedule,
+send, or relay that prompt; `protect-gate.sh` blocks you. When the prompt
+arrives, report the hook's output verbatim. Ask the user, and stop until they do. With the
+mode on:
+
+1. Run the BDD suite and see it **pass** before any production write.
+2. Change production code only. No test, fixture, or feature file may differ
+   from HEAD.
+3. Run the suite after the last production write and see it **pass**.
+4. Commit. `commit-msg` adds the `Refactor-Mode:` trailer; never write it
+   yourself. The mode ends with this commit.
+
+Never add a no-op feature change only to open the gate.
 
 ## Add a stack
 
@@ -83,6 +110,13 @@ walks the gates end to end.
   actions when the task action throws, which happens on test failure. Use
   `finalizedBy`. Other build tools have the same trap; npm `posttest` does
   not run after a failure either. When in doubt, use the wrapper.
+- **A compile error is not a red run.** In a compiled language a step that names a class not yet written
+  fails to compile, which proves nothing about behaviour. Run the scenario with no new steps first (the
+  undefined steps are the red), then write steps and code together.
+- **A filtered run is not a BDD run.** `test --tests OneClass` that leaves the features out must log nothing,
+  or it logs a false FAIL.
+- **Gate every build, including the next one.** In a repo with several builds, run the lint and check commands
+  through one script that finds them all; a fixed list silently leaves a new build ungated.
 - **The BDD runner must fail undefined steps.** Otherwise the red step is
   "skipped", and the pre-commit check never sees a real red.
 - **Order comes from log line order, not timestamps.** Events in the same

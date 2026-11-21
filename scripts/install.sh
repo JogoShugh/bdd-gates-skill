@@ -2,7 +2,7 @@
 # Installs the bdd-gates core into a target repo for one stack.
 #   install.sh <stack> [target-repo-dir]
 # Idempotent: re-running refreshes the core scripts and the hook entries, and
-# keeps an existing .claude/bdd-gates.json and a customized pre-commit.
+# keeps an existing .claude/bdd-gates.json and customized git hooks.
 # Stack build changes (linter, architecture tests, BDD runner) are NOT made
 # here; follow stacks/<stack>/SETUP.md for those.
 set -euo pipefail
@@ -23,11 +23,23 @@ git -C "$target" rev-parse --git-dir >/dev/null 2>&1 || { echo "$target is not a
 # 1. Core scripts, committed with the repo so every teammate gets the gates.
 dest=$target/.claude/bdd-gates
 mkdir -p "$dest"
-for f in lib.sh gherkin-first.sh log-event.sh lint.sh check.sh bdd-run.sh gate-bash.sh; do
+for f in lib.sh gherkin-first.sh protect-gate.sh refactor-prompt.sh log-event.sh lint.sh check.sh bdd-run.sh record-run.sh gate-bash.sh; do
   cp "$skill_dir/core/$f" "$dest/$f"
   chmod +x "$dest/$f"
 done
 echo "core scripts -> .claude/bdd-gates/"
+
+# 1b. The Gherkin tools (Node): what changed scenario by scenario, and the feature lint. Their
+#     node_modules stay out of git; each clone installs them from the lockfile.
+mkdir -p "$dest/gherkin/rules"
+for f in package.json package-lock.json features.mjs gplintrc.json .gitignore; do
+  cp "$skill_dir/core/gherkin/$f" "$dest/gherkin/$f"
+done
+cp "$skill_dir"/core/gherkin/rules/*.js "$dest/gherkin/rules/"
+command -v npm >/dev/null || { echo "npm (Node 18+) is required for the Gherkin tools" >&2; exit 1; }
+(cd "$dest/gherkin" && npm ci --omit=dev --no-audit --no-fund --silent) \
+  || { echo "npm ci failed in .claude/bdd-gates/gherkin" >&2; exit 1; }
+echo "Gherkin tools -> .claude/bdd-gates/gherkin/ (npm ci)"
 
 # 2. Per-repo config from the stack defaults.
 config=$target/.claude/bdd-gates.json
@@ -57,30 +69,49 @@ if [ "$legacy" != "0" ]; then
   echo "WARNING: $legacy older inline gate hook(s) remain in .claude/settings.json; remove them to avoid running gates twice." >&2
 fi
 
-# 4. Git pre-commit hook.
-mkdir -p "$target/.githooks"
-hook=$target/.githooks/pre-commit
-if [ ! -f "$hook" ] || cmp -s "$skill_dir/core/pre-commit" "$hook" || grep -q 'bdd-gates' "$hook"; then
-  cp "$skill_dir/core/pre-commit" "$hook"
-  chmod +x "$hook"
-  echo "pre-commit -> .githooks/pre-commit"
-else
-  cp "$skill_dir/core/pre-commit" "$hook.bdd-gates"
-  chmod +x "$hook.bdd-gates"
-  echo "WARNING: .githooks/pre-commit exists and is not ours; wrote .githooks/pre-commit.bdd-gates to merge by hand." >&2
-fi
+# 4. Git hooks: the ordering check, and refactor mode's trailer and switch-off.
+#    The refactor-mode switch goes to scripts/, for the author to run.
+#    A file that is not ours is kept, and ours goes beside it to merge by hand.
+install_ours() { # <core-file> <target-rel-path>
+  local src=$skill_dir/core/$1 dst=$target/$2
+  mkdir -p "$(dirname "$dst")"
+  if [ ! -f "$dst" ] || cmp -s "$src" "$dst" || grep -q 'bdd-gates' "$dst"; then
+    cp "$src" "$dst"
+    chmod +x "$dst"
+    echo "$1 -> $2"
+  else
+    cp "$src" "$dst.bdd-gates"
+    chmod +x "$dst.bdd-gates"
+    echo "WARNING: $2 exists and is not ours; wrote $2.bdd-gates to merge by hand." >&2
+  fi
+}
+for h in pre-commit commit-msg post-commit; do
+  install_ours "$h" ".githooks/$h"
+done
+install_ours refactor-mode scripts/refactor-mode
 
 # 5. Keep the local event log out of git.
 gitignore=$target/.gitignore
 if ! grep -qxF '.claude/tdd-events.log' "$gitignore" 2>/dev/null; then
+  # Without this, a file whose last line lacks a newline gets the path glued
+  # onto that line (".DS_Store.claude/tdd-events.log"), and the log is not ignored.
+  if [ -s "$gitignore" ] && [ -n "$(tail -c 1 "$gitignore")" ]; then
+    echo >> "$gitignore"
+  fi
   echo '.claude/tdd-events.log' >> "$gitignore"
   echo "added .claude/tdd-events.log to .gitignore"
+fi
+# Each run's results, scenario by scenario, beside the log; local like it.
+if ! grep -qxF '.claude/bdd-runs/' "$gitignore" 2>/dev/null; then
+  echo '.claude/bdd-runs/' >> "$gitignore"
+  echo "added .claude/bdd-runs/ to .gitignore"
 fi
 
 cat <<EOF
 
 Core installed for stack '$stack'. Remaining steps:
   1. Follow $skill_dir/stacks/$stack/SETUP.md (linter, architecture tests, BDD runner, run logging).
-  2. Activate the git hook once:  git config core.hooksPath .githooks
+  2. Activate the git hooks once: git config core.hooksPath .githooks
   3. Prove the gate live:          $skill_dir/scripts/verify-install.sh $target
+  4. Refactor mode, for one commit, is yours to switch on: send the prompt  refactor-mode on "why"
 EOF

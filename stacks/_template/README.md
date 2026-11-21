@@ -9,9 +9,11 @@ supplies config values and build-side instructions. Copy this folder to
 ## The five questions
 
 1. **Where do production code and features live?**
-   `prodPatterns`, `prodExcludePatterns`, `featurePatterns`. Patterns are shell
-   case globs on repo-relative paths, and `*` crosses folders. Exclude step
-   definitions, test code, generated code, and build output.
+   `prodPatterns`, `prodExcludePatterns`, `featurePatterns`, `testPatterns`.
+   Patterns are shell case globs on repo-relative paths, and `*` crosses
+   folders. Exclude step definitions, test code, generated code, and build
+   output. `testPatterns` names test code and fixtures, which a refactor
+   commit must leave unchanged.
 
 2. **Which BDD runner, and does it fail on undefined steps?**
    The red step only proves something if a scenario with no bindings fails,
@@ -29,9 +31,17 @@ supplies config values and build-side instructions. Copy this folder to
    - `wrapper`: no reliable native hook exists. Use
      `.claude/bdd-gates/bdd-run.sh` as `checkCommand` and set
      `bddRawCommandRegex` so Claude cannot bypass it.
+   - Either way, record the run with `.claude/bdd-gates/record-run.sh
+     PASS|FAIL messages=<ndjson> [within=<build dir>] [k=v...]` (the wrapper
+     does), and have the runner write Cucumber's message stream (its "message"
+     plugin or formatter). Then set `scenarioResults: true` (and, for the
+     wrapper, `bddMessages`): the pre-commit judges the scenarios the commit
+     adds or changes, not just the run.
 
 4. **Which complexity linter, at its own defaults?**
    The command must exit non-zero on a violation. Do not invent thresholds.
+   List its settings in `protectedFiles`, with those of the architecture
+   check, or Claude can loosen a rule to pass it.
    Examples: Detekt, SonarAnalyzer + Roslyn, ESLint `complexity`/`max-depth`/
    `max-params`/`max-lines-per-function`, Ruff `C901`/`PLR09xx`, gocyclo/gocognit
    through golangci-lint.

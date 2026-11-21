@@ -8,6 +8,8 @@
 #   1. a FEATURE_WRITE before the first MAIN_WRITE,
 #   2. a failing BDD run before the first MAIN_WRITE,
 #   3. a passing final BDD run.
+# Or, when the author switched refactor mode on (scripts/refactor-mode), the
+# refactor terms below instead.
 # Order is taken from line order in the append-only log, so events in the same
 # second still compare correctly. Timestamps only bound the "since" window.
 # Known simplification: ordering is global per commit, not per scenario.
@@ -22,10 +24,57 @@ bdd_load
 staged_prod=()
 while IFS= read -r f; do
   bdd_is_prod "$f" && staged_prod+=("$f")
-done < <(git diff --cached --name-only --diff-filter=ACMR)
+done < <(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR)
 [ ${#staged_prod[@]} -gt 0 ] || exit 0
 
 log=$(bdd_log)
+
+# Refactor mode: switched on by the author (scripts/refactor-mode), for one
+# commit on the HEAD it names. Production code may change with no feature
+# change and no red run, but only on these terms:
+#   1. no feature file and no test file differs from HEAD, staged or not;
+#   2. a BDD run passed after the mode was switched on, before the first
+#      production write, and the last run passed, after the last write.
+if bdd_refactor_present; then
+  if ! bdd_refactor_on; then
+    echo "pre-commit: refactor mode was switched on for $(bdd_refactor_field head), but HEAD is now $(git rev-parse HEAD)." >&2
+    echo "  The author switches it off (scripts/refactor-mode off) or on again." >&2
+    exit 1
+  fi
+  reasons=()
+  while IFS= read -r line; do
+    p=${line:3}
+    p=${p##* -> }
+    bdd_is_test "$p" && reasons+=("a refactor leaves tests and features as they are, but $p differs from HEAD")
+  done < <(git -c core.quotePath=false status --porcelain -uall)
+  head=$(bdd_refactor_field head)
+  window=$(awk -v on="REFACTOR_ON head=$head" 'index($0, on) { buf = ""; found = 1; next } found { buf = buf $0 "\n" } END { printf "%s", buf }' "$log" 2>/dev/null)
+  first_line() { printf '%b' "$window" | grep -nE -- "$1" | head -1 | cut -d: -f1; }
+  last_line() { printf '%b' "$window" | grep -nE -- "$1" | tail -1 | cut -d: -f1; }
+  pass=$(first_line ' BDD_RUN PASS ')
+  main=$(first_line ' MAIN_WRITE ')
+  last_main=$(last_line ' MAIN_WRITE ')
+  last_run=$(last_line ' BDD_RUN ')
+  [ -n "$pass" ] || reasons+=("no passing BDD run since refactor mode was switched on (green before the change)")
+  if [ -n "$pass" ] && [ -n "$main" ] && [ "$pass" -gt "$main" ]; then
+    reasons+=("production code was written before the suite was seen green")
+  fi
+  case "$(printf '%b' "$window" | grep -E ' BDD_RUN ' | tail -1)" in
+    *" PASS"*) ;;
+    *) reasons+=("the latest BDD run is not PASS (green after the change)") ;;
+  esac
+  if [ -n "$last_main" ] && [ -n "$last_run" ] && [ "$last_run" -lt "$last_main" ]; then
+    reasons+=("production code was written after the last BDD run")
+  fi
+  if [ ${#reasons[@]} -gt 0 ]; then
+    echo "pre-commit: refactor check FAILED:" >&2
+    printf '  - %s\n' "${reasons[@]}" >&2
+    exit 1
+  fi
+  echo "pre-commit: refactor check passed ($(bdd_refactor_field reason))."
+  exit 0
+fi
+
 if [ ! -f "$log" ]; then
   echo "pre-commit: no TDD event log ($log), but this commit touches production code:" >&2
   printf '  %s\n' "${staged_prod[@]}" >&2
@@ -47,13 +96,99 @@ fi
 run_re=' (BDD_RUN|CUCUMBER_RUN) '
 first_line() { printf '%s\n' "$recent" | grep -nE -- "$1" | head -1 | cut -d: -f1; }
 feature=$(first_line ' FEATURE_WRITE ')
-fail=$(first_line "${run_re}FAIL")
 main=$(first_line ' MAIN_WRITE ')
+# The last feature change before the first production write: the Gherkin being committed.
+last_feature=$(printf '%s\n' "$recent" | grep -nE -- ' FEATURE_WRITE ' | cut -d: -f1 \
+  | awk -v before="${main:-999999999}" '$1 < before' | tail -1)
+# Red is a run that failed on behaviour. A run that never got that far (reason=compile, reason=no-results)
+# proves nothing about the scenario. Nor does a run before that last feature change: it ran older steps, or
+# none, so only a run after it counts.
+fail=$(printf '%s\n' "$recent" | grep -nE -- "${run_re}FAIL" | grep -v ' reason=' | cut -d: -f1 \
+  | awk -v after="${last_feature:-${feature:-999999999}}" '$1 > after' | head -1)
 last_run=$(printf '%s\n' "$recent" | grep -E -- "$run_re" | tail -1)
 
 reasons=()
 [ -n "$feature" ] || reasons+=("no FEATURE_WRITE since the last commit")
-[ -n "$fail" ] || reasons+=("no failing BDD run since the last commit (the scenario was never seen red)")
+if [ -z "$fail" ]; then
+  if printf '%s\n' "$recent" | grep -E -- "${run_re}FAIL" | grep -qv ' reason='; then
+    reasons+=("a BDD run failed only before the last feature change, so the steps being committed were never seen red: run the suite again before writing production code")
+  else
+    reasons+=("no BDD run failed on behaviour since the last commit (the scenario was never seen red)")
+  fi
+fi
+
+# The feature change must be a scenario change, and the staged features must pass the feature lint.
+# The Gherkin tools failing (an old Node, a broken install) fails the check: it never passes by default.
+gherkin_failed="the Gherkin tools (.claude/bdd-gates/gherkin, Node 18+) failed, so the scenarios could not be checked"
+touched=""
+if bdd_gherkin_ready; then
+  if changes=$(bdd_feature_changes staged 2>/dev/null) && touched=$(bdd_scenarios_touched "$changes" 2>/dev/null) \
+    && [[ $touched =~ ^[0-9]+$ ]]; then
+    if [ "$touched" -eq 0 ]; then
+      reasons+=("the staged feature files add or change no scenario (only descriptions, comments, tags, blank lines, moves, renames or removals)")
+    fi
+    while IFS= read -r line; do reasons+=("$line"); done < <(jq -r '.invalid[] | "Cucumber cannot parse \(.path): \(.error)"' <<<"$changes")
+  else
+    touched=""
+    reasons+=("$gherkin_failed")
+  fi
+  # The staged copy is what is committed, so the staged copy is linted, in a folder of its own inside the git
+  # directory. The lint may name a copy by its real path (/private/var/... for /var/... on macOS), so both
+  # forms are taken off its findings.
+  staged_features=()
+  if staged_copies=$(mktemp -d "$(git rev-parse --absolute-git-dir)/bdd-staged.XXXXXX") && [ -d "$staged_copies" ]; then
+    trap 'rm -rf "$staged_copies"' EXIT
+    staged_real=$(cd "$staged_copies" && pwd -P)
+  else
+    staged_copies=""
+    reasons+=("the staged feature files could not be copied for the feature lint (is the git directory writable?)")
+  fi
+  [ -z "$staged_copies" ] || while IFS= read -r f; do
+    git cat-file -e ":$f" 2>/dev/null || continue
+    mkdir -p "$staged_copies/$(dirname "$f")"
+    git show ":$f" > "$staged_copies/$f"
+    staged_features+=("$staged_copies/$f")
+  done < <(bdd_changed_features staged)
+  if [ ${#staged_features[@]} -gt 0 ] && ! lint_out=$(bdd_lint_features "${staged_features[@]}" 2>&1); then
+    reasons+=("the staged feature files fail the feature lint:")
+    while IFS= read -r line; do
+      line=${line//"$staged_real/"/}
+      [ -n "$line" ] && reasons+=("  ${line//"$staged_copies/"/}")
+    done <<<"$lint_out"
+  fi
+
+  # Scenario by scenario (scenarioResults: the stack records each run's results): a scenario this change
+  # adds or changes failed in a run before the first production write, and every one of them passes in the
+  # runs after the last production write.
+  # As run by run, a red run counts only after the last feature change before the first production write.
+  if [ "$(bdd_value scenarioResults)" = true ] && [ -n "$touched" ] && [ "$touched" -gt 0 ]; then
+    last_main=$(printf '%s\n' "$recent" | grep -nE -- ' MAIN_WRITE ' | tail -1 | cut -d: -f1)
+    red_files=()
+    green_files=()
+    while IFS=: read -r n rest; do
+      file=$(printf '%s' "$rest" | sed -n 's/.* results=\([^ ]*\).*/\1/p')
+      [ -n "$file" ] || continue
+      if { [ -z "$main" ] || [ "$n" -lt "$main" ]; } && [ "$n" -gt "${last_feature:-0}" ]; then red_files+=("$file"); fi
+      if [ -z "$last_main" ] || [ "$n" -gt "$last_main" ]; then green_files+=("$file"); fi
+    done < <(printf '%s\n' "$recent" | grep -nE -- "$run_re")
+    staged_paths=()
+    while IFS= read -r f; do staged_paths+=("$f"); done < <(bdd_changed_features staged)
+    if ! verdict=$(cd "$root" && node --no-warnings "$(bdd_gherkin)/features.mjs" verdict --source staged \
+      ${red_files[@]+--red "${red_files[@]}"} ${green_files[@]+--green "${green_files[@]}"} -- "${staged_paths[@]}") \
+      || ! jq -e '(.red | type) == "array" and (.unproven | type) == "array"' >/dev/null 2>&1 <<<"$verdict"; then
+      reasons+=("$gherkin_failed")
+      verdict='{"touched":[],"red":["-"],"unproven":[]}'
+    fi
+    if [ "$(jq '.red | length' <<<"$verdict")" -eq 0 ]; then
+      reasons+=("none of the scenarios this change adds or changes was seen failing before the first production write:")
+      while IFS= read -r line; do reasons+=("  $line"); done < <(jq -r '.touched[]' <<<"$verdict")
+    fi
+    while IFS= read -r line; do reasons+=("$line"); done \
+      < <(jq -r '.unproven[] | "not green after the last production write (\(.status)): \(.key)"' <<<"$verdict")
+  fi
+else
+  reasons+=("bdd-gates' Gherkin tools are not installed (Node 18+; npm ci --prefix .claude/bdd-gates/gherkin)")
+fi
 if [ -n "$feature" ] && [ -n "$main" ] && [ "$feature" -gt "$main" ]; then
   reasons+=("production code was written before any feature file")
 fi
@@ -64,6 +199,30 @@ case "$last_run" in
   *" PASS"*) ;;
   *) reasons+=("the latest BDD run since the last commit is not PASS") ;;
 esac
+
+# Green after the last production write, in every module: a build of several modules logs one BDD_RUN line per
+# module, so the last line alone is one module's. After the last MAIN_WRITE there must be a run, and each
+# module's latest run must be PASS.
+last_main_line=$(printf '%s\n' "$recent" | grep -nE -- ' MAIN_WRITE ' | tail -1 | cut -d: -f1)
+if [ -n "$last_main_line" ]; then
+  after=$(printf '%s\n' "$recent" | tail -n +"$((last_main_line + 1))" | grep -E -- "$run_re")
+  if [ -z "$after" ]; then
+    reasons+=("production code was written after the last BDD run (no run since the last MAIN_WRITE)")
+  else
+    while IFS= read -r line; do reasons+=("$line"); done < <(printf '%s\n' "$after" | awk '
+      { m = "-"; for (i = 3; i <= NF; i++) if ($i ~ /^module=/) m = substr($i, 8); s = ($0 ~ / PASS/) ? "PASS" : "FAIL"; latest[m] = s }
+      END { for (m in latest) if (latest[m] != "PASS") printf "module %s: its latest BDD run after the last production write is not PASS\n", m }')
+  fi
+fi
+
+# Every staged production file was written through Claude's tools, so its place in the order is known. A file
+# edited outside them (a terminal, an IDE) has no MAIN_WRITE, and the check could not see when it changed.
+# A pure rename carries no new code and is left out.
+for f in "${staged_prod[@]}"; do
+  git diff --cached --name-only --diff-filter=AM -- "$f" | grep -q . || continue
+  printf '%s\n' "$recent" | awk -v f="$f" '$2 == "MAIN_WRITE" && $3 == f { found = 1 } END { exit !found }' \
+    || reasons+=("$f is staged but has no MAIN_WRITE since the last commit: it was written outside Claude's tools, so its order cannot be checked")
+done
 
 if [ ${#reasons[@]} -gt 0 ]; then
   echo "pre-commit: TDD ordering check FAILED:" >&2

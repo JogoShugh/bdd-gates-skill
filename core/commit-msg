@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Marks every commit made in refactor mode with a "Refactor-Mode: <why>"
+# trailer, and refuses that trailer on any other commit, so the trailer always
+# means the author switched the mode on (scripts/refactor-mode).
+set -o pipefail
+root=$(git rev-parse --show-toplevel)
+export BDD_GATES_ROOT=$root
+. "$root/.claude/bdd-gates/lib.sh"
+
+if bdd_refactor_on; then
+  git interpret-trailers --in-place --if-exists replace \
+    --trailer "Refactor-Mode: $(bdd_refactor_field reason)" "$1"
+elif grep -q '^Refactor-Mode:' "$1"; then
+  echo "commit-msg: a Refactor-Mode trailer, but refactor mode is not on for this commit." >&2
+  exit 1
+fi
+exit 0
