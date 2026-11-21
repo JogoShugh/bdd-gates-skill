@@ -31,10 +31,18 @@ if [ ${#present[@]} -gt 0 ] && bdd_gherkin_ready; then
   runs=$root/.claude/bdd-runs
   mkdir -p "$runs"
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
-  # Claimed atomically (noclobber), as the modules of a parallel build record in the same second.
+  # Claimed atomically (noclobber), as the modules of a parallel build record in the same second. The next
+  # name is tried only while the name was taken: a folder that cannot be written records the run without
+  # results, and never loops.
   n=1
-  until (set -C; : > "$runs/$stamp-$n.json") 2>/dev/null; do n=$((n + 1)); done
-  out=$runs/$stamp-$n.json
+  out=""
+  while [ "$n" -le 1000 ]; do
+    if (set -C; : > "$runs/$stamp-$n.json") 2>/dev/null; then out=$runs/$stamp-$n.json; break; fi
+    [ -e "$runs/$stamp-$n.json" ] || break
+    n=$((n + 1))
+  done
+fi
+if [ -n "${out:-}" ]; then
   rel_within=""
   [ -n "$within" ] && rel_within=$(bdd_rel "$(cd "$within" 2>/dev/null && pwd || echo "$within")")
   if (cd "$root" && node --no-warnings "$(bdd_gherkin)/features.mjs" results ${rel_within:+--within "$rel_within"} \

@@ -142,15 +142,19 @@ function changes(source, base, paths) {
     gone.set(before[key], [...(gone.get(before[key]) ?? []), key]);
   });
   const renamed = [];
-  const added = Object.keys(after).filter((key) => !(key in before)).filter((key) => {
+  const fromGone = (key) => {
     const from = gone.get(after[key])?.shift();
-    if (from === undefined) return true;
-    renamed.push({ from, to: key });
-    return false;
-  });
+    if (from !== undefined) renamed.push({ from, to: key });
+    return from !== undefined;
+  };
+  // Two scenarios of one name are told apart by order ("x", "x (again)"), so deleting the first shifts the
+  // second into its key: a key whose steps are now those of a key that went is that scenario, not a change.
+  const changed = Object.keys(after).filter((key) => key in before && before[key] !== after[key])
+    .filter((key) => !fromGone(key));
+  const added = Object.keys(after).filter((key) => !(key in before)).filter((key) => !fromGone(key));
   return {
     added,
-    changed: Object.keys(after).filter((key) => key in before && before[key] !== after[key]),
+    changed,
     removed: [...gone.values()].flat(),
     renamed,
     invalid,

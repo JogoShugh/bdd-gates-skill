@@ -17,7 +17,8 @@ val gateRoot: File = generateSequence(rootDir) { it.parentFile }
 // The module as the log knows it: in a build nested in the repo, the build's folder first (nested/beta,
 // nested/beta:app), as two builds may well name their projects alike. A build at the repo's root keeps the
 // project's own name.
-val buildFolder: String = rootDir.relativeTo(gateRoot).invariantSeparatorsPath
+// The log splits its fields on spaces, so a space in the folder's path becomes "_".
+val buildFolder: String = rootDir.relativeTo(gateRoot).invariantSeparatorsPath.replace(Regex("""\s"""), "_")
 val module: String = project.path.removePrefix(":").let { path ->
     when {
         buildFolder.isEmpty() -> path.ifEmpty { rootProject.name }

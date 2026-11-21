@@ -22,7 +22,7 @@ if bdd_features_dirty; then
   [ "$(bdd_scenarios_touched "$changes")" -gt 0 ] && exit 0
   {
     echo "Blocked: about to modify production code ($rel), but the feature files add or change no scenario."
-    echo "Only descriptions, comments, tags, blank lines, order or removals differ from HEAD."
+    echo "Only descriptions, comments, tags, blank lines, order, moves, renames or removals differ from HEAD."
     jq -r '.invalid[] | "Cucumber cannot parse \(.path): \(.error)"' <<<"$changes"
     echo "Add a scenario, or change a scenario's steps or Examples, run the BDD suite to see it fail, then implement."
   } >&2

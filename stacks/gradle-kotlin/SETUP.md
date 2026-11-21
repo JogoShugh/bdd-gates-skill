@@ -179,7 +179,8 @@ Cucumber 7.18.0 and Konsist 0.17.3, in a throwaway repo with two builds (one nes
 - `test --tests ArchitectureBoundaryTest` logs nothing.
 
 `scripts/e2e-gradle-kotlin.sh` repeats this proof, so it need not be done by hand. On 20 Nov 2026 it
-passed 21 of 21 checks. Besides the Gherkin-first cycle, it plants one break per tool and expects the named
+passed 22 of 22 checks. Besides the Gherkin-first cycle and two builds whose root projects share a name (each
+logged under its own folder, so one's pass cannot hide the other's failure), it plants one break per tool and expects the named
 task to fail: a 62-line function (`detekt`, LongMethod), a 25-line block copied into a second file (`cpdCheck`),
 an untested object (`koverVerify`), a core import of `java.net.URI` and a `@Suppress("MagicNumber")` (both
 the Konsist test). It then checks that `check` runs `detektMain`, `cpdCheck`, `koverVerify` and `test`, and that

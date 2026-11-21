@@ -167,6 +167,11 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   printf '%s BDD_RUN FAIL\n%s FEATURE_WRITE %s\n%s MAIN_WRITE %s\n%s BDD_RUN PASS\n' \
     2999-01-01T00:00:00Z 2999-01-01T00:00:01Z "$feat_rel" 2999-01-01T00:00:02Z "$prod_rel" 2999-01-01T00:00:03Z > "$repo/.claude/tdd-events.log"
   expect_exit 1 "pre-commit rejects a red run from before the feature was written" bash -c "cd '$repo' && .githooks/pre-commit"
+  # Nor does a run of steps since rewritten, with no scenario-by-scenario results to tell.
+  printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL\n%s FEATURE_WRITE %s\n%s MAIN_WRITE %s\n%s BDD_RUN PASS\n' \
+    2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$feat_rel" 2999-01-01T00:00:03Z "$prod_rel" \
+    2999-01-01T00:00:04Z > "$repo/.claude/tdd-events.log"
+  expect_exit 1 "pre-commit rejects a red run from before the last feature change, run by run" bash -c "cd '$repo' && .githooks/pre-commit"
   printf '%s FEATURE_WRITE %s\n%s BDD_RUN FAIL\n%s MAIN_WRITE %s\n%s BDD_RUN PASS\n' \
     2999-01-01T00:00:00Z "$feat_rel" 2999-01-01T00:00:01Z 2999-01-01T00:00:02Z "$prod_rel" 2999-01-01T00:00:03Z > "$repo/.claude/tdd-events.log"
 
@@ -175,7 +180,10 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   printf '\n  Scenario: a probe with no outcome\n    Given a start\n    When it waits\n' >> "$feat"
   git -C "$repo" add "$feat_rel"
   printf '    Then it rests\n' >> "$feat"
-  expect_exit 1 "pre-commit lints the staged feature, not the working copy" bash -c "cd '$repo' && .githooks/pre-commit"
+  out=$(cd "$repo" && .githooks/pre-commit 2>&1) && bad "pre-commit passed a staged feature that fails the lint" \
+    || { printf '%s' "$out" | grep -qE "^ *- +$feat_rel\$" && ! printf '%s' "$out" | grep -qE 'tmp\.|/var/folders|bdd-staged' \
+      && ok "pre-commit lints the staged feature, not the working copy, and names it by its repo path" \
+      || bad "staged lint output: $(printf '%s' "$out" | head -8)"; }
   cp "$work/feature.keep" "$feat"
   git -C "$repo" add "$feat_rel"
 
@@ -226,6 +234,20 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   wait
   distinct=$(grep ' module=p[1-6] ' "$repo/.claude/tdd-events.log" | sed -n 's/.* results=\([^ ]*\).*/\1/p' | sort -u | wc -l | tr -d ' ')
   [ "$distinct" = 6 ] && ok "six runs recorded at once keep six results files" || bad "six runs recorded at once kept $distinct results files"
+  # A results folder that cannot be written: the run is still recorded, without results, and never hangs.
+  cp "$work/messages.ndjson.keep" "$repo/readonly.ndjson"
+  chmod 555 "$repo/.claude/bdd-runs"
+  BDD_GATES_ROOT=$repo "$repo/.claude/bdd-gates/record-run.sh" FAIL module=ro "messages=$repo/readonly.ndjson" >/dev/null 2>&1 &
+  pid=$!
+  for _ in $(seq 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  if kill -0 "$pid" 2>/dev/null; then
+    pkill -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null
+    bad "record-run hangs when the results folder cannot be written"
+  else
+    grep -q ' BDD_RUN FAIL module=ro' "$repo/.claude/tdd-events.log" \
+      && ok "record-run records the run when the results folder cannot be written" || bad "record-run logged no run for a read-only results folder"
+  fi
+  chmod 755 "$repo/.claude/bdd-runs"
 
   set_config '.scenarioResults = true'
   runs=$repo/.claude/bdd-runs
@@ -268,6 +290,12 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   git -C "$repo" reset -q --hard
   sed 's/Scenario: a probe/Scenario: a retitled probe/' "$feat" > "$feat.tmp" && mv "$feat.tmp" "$feat"
   expect_exit 2 "prod write blocked when a scenario is only retitled" hook gherkin-first.sh "$prod"
+  git -C "$repo" checkout -q -- "$feat_rel"
+  # Two scenarios share a name; deleting the first is a removal, not a change to the second.
+  printf '\n  Scenario: twin\n    Given a first twin\n    Then it is first\n\n  Scenario: twin\n    Given a second twin\n    Then it is second\n' >> "$feat"
+  git -C "$repo" add "$feat_rel" && git -C "$repo" -c core.hooksPath=/dev/null commit -q -m twins
+  awk '/Scenario: twin/ && !done { skip = 3; done = 1 } skip > 0 { skip--; next } { print }' "$feat" > "$feat.tmp" && mv "$feat.tmp" "$feat"
+  expect_exit 2 "prod write blocked when the first of two same-named scenarios is deleted" hook gherkin-first.sh "$prod"
   git -C "$repo" checkout -q -- "$feat_rel"
 
   set_config '.lintCommand = "echo lint-broke; exit 3"'
@@ -361,6 +389,10 @@ for stack_dir in "$skill_dir"/stacks/*/; do
   expect_exit 0 "Claude may read the gate" tool_hook protect-gate.sh Read file_path "$repo/scripts/refactor-mode"
   expect_exit 0 "a plan that names the pre-commit check can be submitted" tool_hook protect-gate.sh ExitPlanMode plan "run .githooks/pre-commit"
   expect_exit 2 "an MCP tool may not write the gate" tool_hook protect-gate.sh mcp__files__write_file path "$repo/.githooks/pre-commit"
+  expect_exit 2 "an agent may not be sent to change the gate" tool_hook protect-gate.sh Agent prompt "set lintCommand in .claude/bdd-gates.json to true"
+  expect_exit 2 "a scheduled agent may not be told to skip the hooks" tool_hook protect-gate.sh RemoteTrigger prompt "commit with --no-verify"
+  expect_exit 0 "a todo that names the pre-commit check can be written" tool_hook protect-gate.sh TodoWrite content "run .githooks/pre-commit"
+  expect_exit 2 "a todo may not name refactor mode" tool_hook protect-gate.sh TodoWrite content 'refactor-mode on "x"'
   quality=$(jq -r '.protectedSample // empty' "$stack_dir/stack.json")
   if [ -n "$quality" ]; then
     expect_exit 2 "Claude may not edit the quality settings ($quality)" tool_hook protect-gate.sh Edit file_path "$repo/pkg/$quality"

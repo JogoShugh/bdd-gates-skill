@@ -96,12 +96,15 @@ fi
 run_re=' (BDD_RUN|CUCUMBER_RUN) '
 first_line() { printf '%s\n' "$recent" | grep -nE -- "$1" | head -1 | cut -d: -f1; }
 feature=$(first_line ' FEATURE_WRITE ')
-# Red is a run that failed on behaviour. A run that never got that far (reason=compile, reason=no-results)
-# proves nothing about the scenario.
-# And red is about the Gherkin only once the Gherkin is written: a run before the first FEATURE_WRITE counts for nothing.
-fail=$(printf '%s\n' "$recent" | grep -nE -- "${run_re}FAIL" | grep -v ' reason=' | cut -d: -f1 \
-  | awk -v after="${feature:-999999999}" '$1 > after' | head -1)
 main=$(first_line ' MAIN_WRITE ')
+# The last feature change before the first production write: the Gherkin being committed.
+last_feature=$(printf '%s\n' "$recent" | grep -nE -- ' FEATURE_WRITE ' | cut -d: -f1 \
+  | awk -v before="${main:-999999999}" '$1 < before' | tail -1)
+# Red is a run that failed on behaviour. A run that never got that far (reason=compile, reason=no-results)
+# proves nothing about the scenario. Nor does a run before that last feature change: it ran older steps, or
+# none, so only a run after it counts.
+fail=$(printf '%s\n' "$recent" | grep -nE -- "${run_re}FAIL" | grep -v ' reason=' | cut -d: -f1 \
+  | awk -v after="${last_feature:-${feature:-999999999}}" '$1 > after' | head -1)
 last_run=$(printf '%s\n' "$recent" | grep -E -- "$run_re" | tail -1)
 
 reasons=()
@@ -123,9 +126,12 @@ if bdd_gherkin_ready; then
     touched=""
     reasons+=("$gherkin_failed")
   fi
-  # The staged copy is what is committed, so the staged copy is linted, in a folder of its own.
-  staged_copies=$(mktemp -d)
+  # The staged copy is what is committed, so the staged copy is linted, in a folder of its own inside the git
+  # directory. The lint may name a copy by its real path (/private/var/... for /var/... on macOS), so both
+  # forms are taken off its findings.
+  staged_copies=$(mktemp -d "$(git rev-parse --absolute-git-dir)/bdd-staged.XXXXXX")
   trap 'rm -rf "$staged_copies"' EXIT
+  staged_real=$(cd "$staged_copies" && pwd -P)
   staged_features=()
   while IFS= read -r f; do
     git cat-file -e ":$f" 2>/dev/null || continue
@@ -135,18 +141,18 @@ if bdd_gherkin_ready; then
   done < <(bdd_changed_features staged)
   if [ ${#staged_features[@]} -gt 0 ] && ! lint_out=$(bdd_lint_features "${staged_features[@]}" 2>&1); then
     reasons+=("the staged feature files fail the feature lint:")
-    while IFS= read -r line; do [ -n "$line" ] && reasons+=("  ${line//$staged_copies\//}"); done <<<"$lint_out"
+    while IFS= read -r line; do
+      line=${line//$staged_real\//}
+      [ -n "$line" ] && reasons+=("  ${line//$staged_copies\//}")
+    done <<<"$lint_out"
   fi
 
   # Scenario by scenario (scenarioResults: the stack records each run's results): a scenario this change
   # adds or changes failed in a run before the first production write, and every one of them passes in the
   # runs after the last production write.
-  # A red run counts only after the last feature change before the first production write: a run of older
-  # steps says nothing about the steps being committed.
+  # As run by run, a red run counts only after the last feature change before the first production write.
   if [ "$(bdd_value scenarioResults)" = true ] && [ -n "$touched" ] && [ "$touched" -gt 0 ]; then
     last_main=$(printf '%s\n' "$recent" | grep -nE -- ' MAIN_WRITE ' | tail -1 | cut -d: -f1)
-    last_feature=$(printf '%s\n' "$recent" | grep -nE -- ' FEATURE_WRITE ' | cut -d: -f1 \
-      | awk -v before="${main:-999999999}" '$1 < before' | tail -1)
     red_files=()
     green_files=()
     while IFS=: read -r n rest; do
