@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end proof of the gradle-kotlin stack: real Gradle, real Cucumber-JVM, the real hooks and pre-commit.
 # Builds a throwaway repo with two Gradle builds sharing build-logic, installs the gates, then walks one
-# Gherkin-first cycle scenario by scenario, and checks that a commit with no red run for the new scenario is
-# refused. Needs a JDK 21 (JAVA_HOME), Node 18+, and the network the first time (Gradle, Maven Central, npm).
+# Gherkin-first cycle scenario by scenario, checks that a commit with no red run for the new scenario is
+# refused, and that each quality tool fails on code planted to break it. Needs a JDK 21 (JAVA_HOME), Node 18+, and the network the first time (Gradle, Maven Central, npm).
 #   scripts/e2e-gradle-kotlin.sh [work-dir]
 set -uo pipefail
 
@@ -109,7 +109,10 @@ class LampSteps {
     fun isOn() = assertTrue(lamp.on)
 }
 EOF
-  sed 's/your.pkg.domain/demo.domain/' "$templates/ArchitectureBoundaryTest.kt" > "$d/src/test/kotlin/demo/domain/ArchitectureBoundaryTest.kt"
+  # java.net stands in for a framework: it is on every classpath, so a core import of it compiles and only
+  # Konsist can catch it.
+  sed -e 's/your.pkg.domain/demo.domain/' -e 's/listOf("org.gradle"/listOf("java.net", "org.gradle"/' \
+    "$templates/ArchitectureBoundaryTest.kt" > "$d/src/test/kotlin/demo/domain/ArchitectureBoundaryTest.kt"
 }
 build alpha alpha ..
 build nested/beta beta ../..
@@ -199,6 +202,49 @@ git add -A
 out=$(.githooks/pre-commit 2>&1) && bad "pre-commit accepted a scenario never seen red" \
   || { printf '%s' "$out" | grep -q "none of the scenarios this change adds or changes was seen failing" \
     && ok "pre-commit refuses it: the new scenario was never seen red" || bad "refused for another reason: $out"; }
+
+echo "the quality tools fail on bad code"
+git reset -q --hard
+domain=alpha/src/main/kotlin/demo/domain
+# Each case plants one file, runs the task that should catch it, expects that task to fail naming the
+# problem, and removes the file. The file is written first, not piped in: a pipe would run the case in a
+# subshell and lose its count. Usage: red_case <what> <expected text> <file> <gradle task...>
+red_case() {
+  local what=$1 expected=$2 file=$3 out
+  shift 3
+  out=$(cd alpha && ./gradlew --console=plain "$@" 2>&1) && bad "$what: $* passed" \
+    || { printf '%s' "$out" | grep -q "$expected" && ok "$what: $* fails, naming $expected" \
+      || bad "$what: $* failed for another reason: $(printf '%s' "$out" | grep -E 'FAILED|rror|violat' | head -3)"; }
+  rm -f "$file"
+}
+{ printf 'package demo.domain\n\n/** Counts to sixty-two, one statement at a time. */\nfun counted(): Int {\n    var total = 0\n'
+  for _ in $(seq 62); do printf '    total += 1\n'; done
+  printf '    return total\n}\n'; } > "$domain/Counted.kt"
+red_case "a long method" LongMethod "$domain/Counted.kt" detekt
+copied() { # <name>: a block well over CPD's default of 100 tokens
+  printf 'package demo.domain\n\n/** A copied block. */\nfun %s(a: Int, b: Int): List<Int> {\n' "$1"
+  for n in $(seq 25); do printf '    val v%s = listOf(a + %s, b - %s).map { it * a }.filter { it > b }\n' "$n" "$n" "$n"; done
+  printf '    return listOf(a)\n}\n'
+}
+copied first > "$domain/First.kt"
+copied second > "$domain/Second.kt"
+red_case "a copied block" "CPD found duplicate code" "$domain/Second.kt" cpdCheck
+rm -f "$domain/First.kt"
+{ printf 'package demo.domain\n\n/** Code no scenario reaches. */\nobject Untested {\n'
+  for n in $(seq 12); do printf '    /** Step %s. */\n    fun step%s(x: Int): Int {\n        val y = x + %s\n        return y * y\n    }\n' "$n" "$n" "$n"; done
+  printf '}\n'; } > "$domain/Untested.kt"
+red_case "uncovered code" "expected minimum" "$domain/Untested.kt" koverVerify
+printf 'package demo.domain\n\nimport java.net.URI\n\n/** A core type that knows about the network. */\nclass Fetched(val from: URI)\n' > "$domain/Fetched.kt"
+red_case "a core import of a framework type" "core files import no framework" "$domain/Fetched.kt" \
+  test --tests demo.domain.ArchitectureBoundaryTest
+printf 'package demo.domain\n\n/** A rule switched off in place. */\n@Suppress("MagicNumber")\nfun answer(): Int = 42\n' > "$domain/Answer.kt"
+red_case "a suppressed rule" "suppresses only the rules the team allows" "$domain/Answer.kt" \
+  test --tests demo.domain.ArchitectureBoundaryTest
+planned=$(cd alpha && ./gradlew --console=plain check --dry-run 2>&1)
+for task in :detektMain :cpdCheck :koverVerify :test; do
+  printf '%s' "$planned" | grep -q "^$task " && ok "check runs $task" || bad "check does not run $task"
+done
+scripts/gradle-builds.sh check >/dev/null 2>&1 && ok "check passes again with the planted code gone" || bad "check fails after the planted code is gone"
 
 echo ""
 echo "$passed passed, $failed failed (repo: $repo)"

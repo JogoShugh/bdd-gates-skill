@@ -177,3 +177,10 @@ Cucumber 7.18.0 and Konsist 0.17.3, in a throwaway repo with two builds (one nes
   an untested object (`koverVerify`), `@Suppress("MagicNumber")` (the Konsist test), and a scenario with an
   undefined step (`test`, logged `BDD_RUN FAIL`).
 - `test --tests ArchitectureBoundaryTest` logs nothing.
+
+`scripts/e2e-gradle-kotlin.sh` repeats this proof, so it need not be done by hand. On 20 Nov 2026 it
+passed 21 of 21 checks. Besides the Gherkin-first cycle, it plants one break per tool and expects the named
+task to fail: a 62-line function (`detekt`, LongMethod), a 25-line block copied into a second file (`cpdCheck`),
+an untested object (`koverVerify`), a core import of `java.net.URI` and a `@Suppress("MagicNumber")` (both
+the Konsist test). It then checks that `check` runs `detektMain`, `cpdCheck`, `koverVerify` and `test`, and that
+`check` passes again once the planted files are gone.
